@@ -41,10 +41,10 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
 
     # Run models in parallel (submit tasks and wait)
     model_tasks = [
-        run_model.submit('baseline', models.baseline, df, path, gid_1=gid_1),
+        run_model.submit("baseline", models.baseline, df, path, gid_1=gid_1),
         # run_model.submit('climate', models.climate, df, path, gid_1=gid_1),
-        run_model.submit('sarima', models.sarima, df, path, gid_1=gid_1),
-        run_model.submit('tcn', models.tcn, df, path, gid_1=gid_1, retrain=False),
+        run_model.submit("sarima", models.sarima, df, path, gid_1=gid_1),
+        run_model.submit("tcn", models.tcn, df, path, gid_1=gid_1, retrain=False),
         # run_model.submit('timegpt', timegpt.tcn, df, path, gid_1=gid_1),
     ]
     # Await results
@@ -54,12 +54,10 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
 # Some pre-defined pipelines...
 
 
-# To call: python -m pipeline.analysis.run_peru_northwest
 def run_peru_northwest():
     run_pipeline("PER", ["Piura", "Tumbes", "Lambayeque"])
 
 
-# To call: python -m pipeline.analysis.run_mex_oaxaca
 def run_mex_oaxaca():
     run_pipeline(iso3="MEX", adm1=["Oaxaca"])
 
