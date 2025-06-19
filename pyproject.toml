@@ -1,0 +1,27 @@
+[project]
+name = "Thucia"
+version = "0.1.0"
+description = "Thucia"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "darts>=0.35.0",
+    "geopandas>=1.1.0",
+    "netcdf4>=1.7.2",
+    "openpyxl>=3.1.5",
+    "platformdirs>=4.3.8",
+    "rapidfuzz>=3.13.0",
+    "rasterstats>=0.20.0",
+    "typing-extensions>=4.14.0",
+    "xarray>=2025.6.0",
+]
+
+[project.optional-dependencies]
+prefect = [
+    "prefect>=3.4.6",
+]
+vis = [
+    "streamlit>=1.45.1",
+    "colorcet>=3.1.0",
+    "seaborn>=0.13.2",
+]

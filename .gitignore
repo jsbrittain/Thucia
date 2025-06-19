@@ -1,0 +1,7 @@
+.env
+.DS_Store
+.python-version
+data/
+**/**egg-info**
+**/__pycache__
+darts_logs
