@@ -1,8 +1,8 @@
 import io
 import logging
+
 import pandas as pd
 import requests
-
 from pandas.tseries.offsets import MonthEnd
 from thucia.core.geo.plugin_base import SourceBase
 

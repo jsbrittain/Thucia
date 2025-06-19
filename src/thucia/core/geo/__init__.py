@@ -1,12 +1,13 @@
 import logging
 import unicodedata
-import pandas as pd
-import geopandas as gpd
-
 from pathlib import Path
-from rapidfuzz import fuzz, process
 
+import geopandas as gpd
+import pandas as pd
+from rapidfuzz import fuzz
+from rapidfuzz import process
 from thucia.core.fs import cache_folder
+
 from .plugin_loader import load_plugins
 
 plugins = None

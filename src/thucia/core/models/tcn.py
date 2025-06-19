@@ -1,12 +1,12 @@
-import torch
 import logging
+
 import numpy as np
 import pandas as pd
-
+import torch
 from darts import TimeSeries
+from darts.dataprocessing.transformers import Scaler
 from darts.models import TCNModel
 from darts.utils.likelihood_models import QuantileRegression
-from darts.dataprocessing.transformers import Scaler
 
 torch.set_default_dtype(torch.float32)
 
