@@ -1,7 +1,9 @@
-from prefect import task as prefect_task, flow as prefect_flow
-from prefect.tasks import task_input_hash
 from datetime import timedelta
 from typing import Callable
+
+from prefect import flow as prefect_flow
+from prefect import task as prefect_task
+from prefect.tasks import task_input_hash
 
 
 def task(_func: Callable = None, **task_kwargs):

@@ -1,8 +1,8 @@
-import geopandas as gpd
-
 from pathlib import Path
-from thucia.core.fs import cache_folder
+
+import geopandas as gpd
 from rasterstats import zonal_stats
+from thucia.core.fs import cache_folder
 
 
 def raster_stats_gid2(tif_file, gid_2s: list[str], stats=["mean"]):

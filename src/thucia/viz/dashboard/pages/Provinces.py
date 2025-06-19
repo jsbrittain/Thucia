@@ -1,10 +1,10 @@
-import seaborn as sns
-import streamlit as st
+from pathlib import Path
+
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
-
+import seaborn as sns
+import streamlit as st
 from thucia.core.cases import read_nc
-from pathlib import Path
 
 FOLDER_PATH = "/Users/jsb/repos/jsbrittain/thucia/data"
 

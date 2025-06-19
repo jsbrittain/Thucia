@@ -1,10 +1,10 @@
 import logging
+from typing import Callable
+
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-
-from typing import Callable
 from thucia.core.geo import get_admin2_list
 
 

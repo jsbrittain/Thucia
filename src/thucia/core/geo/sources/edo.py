@@ -1,15 +1,13 @@
-import logging
-import pandas as pd
-
-import requests
-import zipfile
 import io
-
+import logging
+import zipfile
 from pathlib import Path
-from thucia.core.fs import cache_folder
-from thucia.core.geo.stats import raster_stats_gid2
 
+import pandas as pd
+import requests
+from thucia.core.fs import cache_folder
 from thucia.core.geo.plugin_base import SourceBase
+from thucia.core.geo.stats import raster_stats_gid2
 
 
 class EDO(SourceBase):

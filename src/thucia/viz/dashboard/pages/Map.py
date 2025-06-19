@@ -1,12 +1,12 @@
+from pathlib import Path
+
+import colorcet as cc
+import geopandas as gpd
 import numpy as np
 import pydeck as pdk
-import colorcet as cc
 import streamlit as st
-import geopandas as gpd
-
-from pathlib import Path
-from thucia.core.fs import cache_folder
 from thucia.core.cases import read_nc
+from thucia.core.fs import cache_folder
 
 st.set_page_config(layout="wide")
 st.title("Thucia")

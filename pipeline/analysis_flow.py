@@ -1,17 +1,16 @@
 from pathlib import Path
-from prefect.futures import wait
 
+from prefect.futures import wait
 from thucia.flow import models
-from thucia.flow.cases import read_nc, cases_per_month
-from thucia.flow.models import run_model
-from thucia.flow.geo import (
-    lookup_gid1,
-    merge_geo_sources,
-    pad_admin2,
-    add_incidence_rate,
-)
-from thucia.flow.wrappers import flow
+from thucia.flow.cases import cases_per_month
+from thucia.flow.cases import read_nc
+from thucia.flow.geo import add_incidence_rate
+from thucia.flow.geo import lookup_gid1
+from thucia.flow.geo import merge_geo_sources
+from thucia.flow.geo import pad_admin2
 from thucia.flow.logging import enable_prefect_logging_redirect
+from thucia.flow.models import run_model
+from thucia.flow.wrappers import flow
 
 
 enable_prefect_logging_redirect()

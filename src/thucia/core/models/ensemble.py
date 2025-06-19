@@ -1,6 +1,6 @@
 import numpy as np
-from sklearn.metrics import mean_pinball_loss
 from scipy.optimize import minimize
+from sklearn.metrics import mean_pinball_loss
 
 
 def weighted_pinball_loss(weights, predictions, truths, quantiles):

@@ -1,13 +1,12 @@
 import logging
-import requests
-import pandas as pd
-
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 
+import pandas as pd
+import requests
 from thucia.core.fs import cache_folder
-from thucia.core.geo.stats import raster_stats_gid2
 from thucia.core.geo.plugin_base import SourceBase
+from thucia.core.geo.stats import raster_stats_gid2
 
 
 class WorldPop(SourceBase):

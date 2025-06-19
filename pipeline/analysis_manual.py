@@ -1,18 +1,23 @@
-import logging
 import argparse
-import numpy as np
-
+import logging
 from pathlib import Path
+
+import numpy as np
+from thucia.core.cases import cases_per_month
+from thucia.core.cases import r2
+from thucia.core.cases import read_nc
+from thucia.core.cases import write_nc
+from thucia.core.geo import add_incidence_rate
+from thucia.core.geo import convert_to_incidence_rate
+from thucia.core.geo import lookup_gid1
+from thucia.core.geo import merge_geo_sources
+from thucia.core.geo import pad_admin2
+from thucia.core.models import baseline
+from thucia.core.models import climate
+from thucia.core.models import samples_to_quantiles
+from thucia.core.models import sarima
+from thucia.core.models import tcn
 from thucia.viz import plot_all_admin2
-from thucia.core.cases import read_nc, cases_per_month, write_nc, r2
-from thucia.core.models import baseline, climate, sarima, tcn, samples_to_quantiles
-from thucia.core.geo import (
-    lookup_gid1,
-    merge_geo_sources,
-    pad_admin2,
-    add_incidence_rate,
-    convert_to_incidence_rate,
-)
 
 
 logging.basicConfig(level=logging.INFO)

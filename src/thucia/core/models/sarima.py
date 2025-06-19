@@ -1,7 +1,7 @@
 import logging
+
 import numpy as np
 import pandas as pd
-
 from darts import TimeSeries
 from darts.models import AutoARIMA
 from darts.utils.timeseries_generation import datetime_attribute_timeseries
