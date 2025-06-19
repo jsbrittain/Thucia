@@ -29,9 +29,9 @@ def enable_prefect_logging_redirect(level=logging.INFO):
     """
     handler = PrefectLogRedirectHandler()
     handler.setLevel(level)
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-    ))
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
 
     root_logger = logging.getLogger()
     root_logger.addHandler(handler)

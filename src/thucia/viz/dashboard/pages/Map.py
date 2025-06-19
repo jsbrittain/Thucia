@@ -42,6 +42,18 @@ country = countries[country_name]
 admin_level_name = st.sidebar.selectbox("Admin Level:", list(admin_levels.keys()))
 admin_level = admin_levels[admin_level_name]
 
+data_folder = (
+    Path(__file__).parent.parent.parent.parent.parent.parent
+    / "data"
+    / "cases"
+    / country
+)
+data_file_list = list(data_folder.glob("*.nc"))
+data_filename = st.sidebar.selectbox(
+    "Data file:", [data_file.name for data_file in data_file_list]
+)
+casedata_filename = str(data_folder / data_filename)
+
 # Load geospatial data
 geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
 if admin_level == "ADM1":
@@ -50,10 +62,6 @@ elif admin_level == "ADM2":
     geojson = gpd.read_file(geo_filename, layer="ADM_ADM_2")
 else:
     raise ValueError(f"Unsupported admin level: {admin_level}")
-
-casedata_filename = (
-    f"/Users/jsb/repos/jsbrittain/thucia/data/cases/{country}/cases_with_climate.nc"
-)
 
 
 def get_color(score, cmap, alpha=0):
@@ -68,7 +76,28 @@ def get_colormap():
 
 
 # --- Date slider
-case_data = read_nc(casedata_filename)
+case_data = read_nc(str(data_folder / "cases_with_climate.nc"))  # base dataset
+
+# Now read model predictions and merge with case data
+prediction_data = read_nc(casedata_filename)
+if "quantile" in prediction_data.columns.tolist():
+    # If quantiles are present, we take the median
+    prediction_data = prediction_data[prediction_data["quantile"] == 0.5]
+    prediction_data = prediction_data.drop(columns=["quantile"])
+    case_data = case_data.merge(
+        prediction_data[["Date", "GID_2", "prediction"]],
+        on=["Date", "GID_2"],
+        how="left",
+    )
+if "sample" in prediction_data.columns.tolist():
+    # If samples are present, we take the median
+    prediction_data = prediction_data.groupby(["Date", "GID_2"]).median().reset_index()
+    case_data = case_data.merge(
+        prediction_data[["Date", "GID_2", "prediction"]],
+        on=["Date", "GID_2"],
+        how="left",
+    )
+
 available_dates = sorted(case_data["Date"].unique())
 start_date, end_date = st.select_slider(
     "Select a date:",
@@ -77,15 +106,15 @@ start_date, end_date = st.select_slider(
     value=(available_dates[-2], available_dates[-1]),
 )
 
-metrics = case_data.columns.tolist()
 # Filter out non-numeric metrics
+metrics = case_data.columns.tolist()
 metrics = [m for m in metrics if case_data[m].dtype.kind in "biufc"]
 metric = st.sidebar.selectbox(
     "Metric:",
     metrics,
     index=metrics.index("Cases") if "Cases" in metrics else 0,
 )
-if metric in ["Cases"]:
+if metric in ["Cases", "prediction"]:
     metric_op = "sum"
 else:
     metric_op = "mean"
@@ -117,6 +146,10 @@ if admin_level == "ADM1":
         )
         .reset_index()
     )
+
+case_data[case_data[metric] == 0] = (
+    np.nan
+)  # Set zero values to NaN for better visualization
 
 if admin_level == "ADM1":
     gid_lookup = "GID_1"

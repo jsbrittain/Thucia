@@ -3457,7 +3457,6 @@ dependencies = [
     { name = "netcdf4" },
     { name = "openpyxl" },
     { name = "platformdirs" },
-    { name = "prefect" },
     { name = "rapidfuzz" },
     { name = "rasterstats" },
     { name = "typing-extensions" },
@@ -3465,6 +3464,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+prefect = [
+    { name = "prefect" },
+]
 vis = [
     { name = "colorcet" },
     { name = "seaborn" },
@@ -3479,7 +3481,7 @@ requires-dist = [
     { name = "netcdf4", specifier = ">=1.7.2" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "platformdirs", specifier = ">=4.3.8" },
-    { name = "prefect", specifier = ">=3.4.6" },
+    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.4.6" },
     { name = "rapidfuzz", specifier = ">=3.13.0" },
     { name = "rasterstats", specifier = ">=0.20.0" },
     { name = "seaborn", marker = "extra == 'vis'", specifier = ">=0.13.2" },
@@ -3487,7 +3489,7 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4.14.0" },
     { name = "xarray", specifier = ">=2025.6.0" },
 ]
-provides-extras = ["vis"]
+provides-extras = ["prefect", "vis"]
 
 [[package]]
 name = "toml"
