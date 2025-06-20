@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "Thucia"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Thucia"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,3 +36,5 @@ dev = [
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
 ]
+
+[tool.setuptools_scm]
