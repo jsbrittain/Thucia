@@ -1,4 +1,5 @@
 import logging
+import requests
 import unicodedata
 from pathlib import Path
 
@@ -62,6 +63,17 @@ def get_admin2_list(iso3: str) -> pd.DataFrame:
     """
 
     file_path = Path(cache_folder) / "geo" / iso3 / f"gadm41_{iso3}.gpkg"
+    if not file_path.exists():
+        logging.info("GeoPackage file not found, downloading...")
+        url = f"https://geodata.ucdavis.edu/gadm/gadm4.1/gpkg/gadm41_{iso3.upper()}.gpkg"
+        response = requests.get(url)
+        if response.status_code == 200:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "wb") as f:
+                f.write(response.content)
+            logging.info(f"Downloaded GeoPackage file to {file_path}")
+        else:
+            logging.error(f"Failed to download GeoPackage file from {url}")
     if not file_path.exists():
         raise FileNotFoundError(f"GeoPackage file for {iso3} not found at {file_path}")
 

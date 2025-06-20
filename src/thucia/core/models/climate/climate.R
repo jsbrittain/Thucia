@@ -1,5 +1,6 @@
 library(argparse)
 library(logger)
+library(ncdf4)
 library(INLA)
 library(VGAM)
 
@@ -17,6 +18,8 @@ xargs <- parser$parse_args()
 
 target_date <- xargs$date
 filename_i <- xargs$output
+
+nc_file <- nc_open("data/cases_with_climate.nc")
 
 run_province_model_func <- function(data, formula = default_pois_formula) {
   setkeyv(data, c("TIME", "PROVINCE"))
