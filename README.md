@@ -1,7 +1,7 @@
 
 ![Thucia](docs/logo/logo.png)
 
-[![Documentation Status](https://readthedocs.org/projects/thucia/badge/?version=latest)](https://thucia.readthedocs.io/en/latest/?badge=latest)
+[![Thucia](https://github.com/kraemer-lab/Thucia/actions/workflows/thucia.yaml/badge.svg)](https://github.com/kraemer-lab/Thucia/actions/workflows/thucia.yaml) [![Documentation Status](https://readthedocs.org/projects/thucia/badge/?version=latest)](https://thucia.readthedocs.io/en/latest/?badge=latest)
 
 Documentation: [ReadTheDocs](https://thucia.readthedocs.io/en/latest)
 
