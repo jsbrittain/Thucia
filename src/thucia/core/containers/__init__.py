@@ -1,10 +1,9 @@
-import os
-import docker
 import logging
-
-from podman import PodmanClient
-from pathlib import Path
+import os
 from functools import lru_cache
+
+import docker
+from podman import PodmanClient
 
 
 @lru_cache(maxsize=1)
@@ -33,8 +32,8 @@ def build_in_docker(path, tag, dockerfile, remove=True):
         rm=remove,
     )
     for log in build_logs:
-        if 'stream' in log:
-            logging.info(log['stream'].strip())
+        if "stream" in log:
+            logging.info(log["stream"].strip())
     return image
 
 

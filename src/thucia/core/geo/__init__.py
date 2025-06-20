@@ -1,10 +1,10 @@
 import logging
-import requests
 import unicodedata
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+import requests
 from rapidfuzz import fuzz
 from rapidfuzz import process
 from thucia.core.fs import cache_folder
@@ -65,7 +65,9 @@ def get_admin2_list(iso3: str) -> pd.DataFrame:
     file_path = Path(cache_folder) / "geo" / iso3 / f"gadm41_{iso3}.gpkg"
     if not file_path.exists():
         logging.info("GeoPackage file not found, downloading...")
-        url = f"https://geodata.ucdavis.edu/gadm/gadm4.1/gpkg/gadm41_{iso3.upper()}.gpkg"
+        url = (
+            f"https://geodata.ucdavis.edu/gadm/gadm4.1/gpkg/gadm41_{iso3.upper()}.gpkg"
+        )
         response = requests.get(url)
         if response.status_code == 200:
             file_path.parent.mkdir(parents=True, exist_ok=True)
