@@ -48,7 +48,8 @@ def run_in_docker(image, command, volumes={}, remove=True):
         remove=remove,
         detach=False,
     )
-    return 0, container.decode()
+    exitcode = 0
+    return exitcode, container.decode()
 
 
 def build_in_podman(path, tag, dockerfile, remove=True):
@@ -78,12 +79,12 @@ def run_in_podman(image, command, volumes={}, remove=True):
             remove=remove,
         )
         container.start()
-        result = container.wait()
+        exitcode = container.wait()
         logs = b"".join(container.logs()).decode()
-        if result == 0:
+        if exitcode == 0:
             logging.info("Container ran successfully")
-            return result, logs
-        raise RuntimeError(f"Podman container failed with exit code {result}: {logs}")
+            return exitcode, logs
+        raise RuntimeError(f"Podman container failed with exit code {exitcode}: {logs}")
 
 
 def build_container(path, tag, dockerfile="Dockerfile", remove=True):
@@ -102,10 +103,10 @@ def run_in_container(*args, **kwargs):
     runtime = get_available_container_runtime()
     if runtime == "docker":
         logging.info("Using Docker")
-        result, logs = run_in_docker(*args, **kwargs)
+        exitcode, logs = run_in_docker(*args, **kwargs)
     elif runtime == "podman":
         logging.info("Using Podman")
-        result, logs = run_in_podman(*args, **kwargs)
+        exitcode, logs = run_in_podman(*args, **kwargs)
     else:
         raise RuntimeError("Neither Docker nor Podman is installed.")
-    return result, logs
+    return exitcode, logs

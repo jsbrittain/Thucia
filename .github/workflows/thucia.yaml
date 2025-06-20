@@ -1,0 +1,20 @@
+name: Thucia
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
