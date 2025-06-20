@@ -1,6 +1,10 @@
 .env
 .DS_Store
 .python-version
+venv
+.venv
+coverage.txt
+.coverage
 data/
 **/**egg-info**
 **/__pycache__
