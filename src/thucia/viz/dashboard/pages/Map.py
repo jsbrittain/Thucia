@@ -65,6 +65,8 @@ else:
 
 
 def get_color(score, cmap, alpha=0):
+    if np.isnan(score):
+        return [255, 255, 255, alpha]
     hex_color = cmap[int(score * (len(cmap) - 1))]
     rgb = tuple(int(hex_color.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
     return list(rgb) + [alpha]

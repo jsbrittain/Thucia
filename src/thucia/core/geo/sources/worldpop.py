@@ -76,7 +76,7 @@ class WorldPop(SourceBase):
 
         return tif_file
 
-    @lru_cache(maxsize=100)
+    @lru_cache(maxsize=500)
     def get_cached_stats(self, tif_file, gid_2s, stats):
         return raster_stats_gid2(tif_file, list(gid_2s), stats=list(stats))
 
@@ -126,12 +126,22 @@ class WorldPop(SourceBase):
                     continue
 
                 # Calculate zonal statistics for the GID_2 regions
-                stat = self.get_cached_stats(
+                stat = self.get_cached_stats(  # cached as pop is per year
                     tif_file, tuple(gid_2s), stats=tuple(["sum"])
-                )
+                ).copy()
+                if len(stat) != len(gid_2s):
+                    print(
+                        f"Warning: Expected {len(gid_2s)} stats for {date}, got {len(stat)}"
+                    )
                 stat["sum"] = stat["sum"].fillna(0)  # Ensure no NaN values
                 stat["Date"] = date
                 stats.append(stat)
+
+            if len(stats) != len(unique_gid2_dates["Date"].unique()):
+                logging.warning(
+                    f"Some dates did not have data for {metric}. "
+                    "Check if the raster files are available."
+                )
 
             stats = pd.concat(stats, ignore_index=True)
             col_map = {f"{measure}": f"{metric}_{measure}" for measure in measures}

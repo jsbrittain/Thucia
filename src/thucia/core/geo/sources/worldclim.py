@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 import pandas as pd
+import rasterio
 import requests
 from thucia.core.fs import cache_folder
 from thucia.core.geo.plugin_base import SourceBase
@@ -14,7 +15,7 @@ class WorldClim(SourceBase):
     ref = "worldclim"
     name = "WorldClim"
 
-    def get_filename(self, metric, year, month):
+    def _get_filename_cru(self, metric, year, month):
         # Check for file in cache, download if not, and return as a DataFrame
 
         dirstem = Path(cache_folder) / "climate"
@@ -57,6 +58,81 @@ class WorldClim(SourceBase):
                 )
 
         return tif_file
+
+    def _get_filename_forecast(self, metric, year, month, source="ACCESS-CM2"):
+        # Check for file in cache, download if not, and return as a DataFrame
+
+        logging.warning(
+            f"WorldClim data not available for {year}-{month:02d} ---"
+            " using '{source}' forecast data."
+        )
+
+        res = "2.5m"
+        ssp = "ssp245"
+
+        dirstem = Path(cache_folder) / "climate"
+        filestem_month = "wc2.1_{res}_{metric}_{source}_{ssp}_{year}-{month:02d}.tif"
+        filestem_year = "wc2.1_{res}_{metric}_{source}_{ssp}_{year}.tif"
+
+        tif_file_month = Path(dirstem) / filestem_month.format(
+            res=res, metric=metric, source=source, ssp=ssp, year=year, month=month
+        )
+        tif_file_year = Path(dirstem) / filestem_year.format(
+            res=res, metric=metric, source=source, ssp=ssp, year=year
+        )
+
+        if not tif_file_year.exists():
+            # Download file and place in the cache
+            url_template = (
+                "https://geodata.ucdavis.edu/cmip6/{res}/{source}/{ssp}/"
+                "wc2.1_{res}_{metric}_{source}_{ssp}_{year_start}-{year_end}.tif"
+            )
+            # Year range is by decade
+            year_start = year - (year % 10)
+            year_end = year_start + 9
+
+            url = url_template.format(
+                res=res,
+                source=source,
+                ssp=ssp,
+                metric=metric,
+                year_start=year_start,
+                year_end=year_end,
+            )
+            logging.info(f"Downloading WorldClim data from {url}...")
+            response = requests.get(url)
+            if response.status_code != 200:
+                raise FileNotFoundError(f"Failed to download {url}")
+            with open(tif_file_year, "wb") as f:
+                f.write(response.content)
+
+        if not tif_file_month.exists():
+            # Extract the month band from the year file
+            with rasterio.open(tif_file_year) as src:
+                band = src.read(int(month))
+                profile = src.profile.copy()
+                profile.update(count=1)
+                with rasterio.open(tif_file_month, "w", **profile) as dst:
+                    dst.write(band, 1)
+
+        if not tif_file_month.exists():
+            raise FileNotFoundError(
+                f"Raster file {tif_file_month} not found after extraction."
+            )
+
+        return tif_file_month
+
+    def get_filename(self, metric, year, month):
+        try:
+            return self._get_filename_cru(metric, year, month)
+        except FileNotFoundError:
+            pass
+        try:
+            return self._get_filename_cru(metric, year, month)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Raster file for {metric} in {year}-{month:02d} not found."
+            )
 
     def merge(
         self,

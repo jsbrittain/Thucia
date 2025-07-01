@@ -8,6 +8,7 @@ dynamic = ["version"]
 description = "Thucia"
 readme = "README.md"
 requires-python = ">=3.11"
+scripts = { thucia = "thucia:main" }
 dependencies = [
     "darts>=0.35.0",
     "docker>=7.1.0",

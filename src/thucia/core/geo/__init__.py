@@ -189,7 +189,7 @@ def align_admin2_regions(
     logging.info(f"After merging with admin2 regions, there are {len(df)} records.")
     logging.info(
         f"After alignment, there are {df['ADM1'].nunique()} unique Admin-1 regions and "
-        "{df['ADM2'].nunique()} unique Admin-2 regions."
+        f"{df['ADM2'].nunique()} unique Admin-2 regions."
     )
     return df
 
@@ -335,8 +335,26 @@ def pad_admin2(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     # Concatenate the original DataFrame with the missing regions
-    return (
+    result = (
         pd.concat([df, *missing_df], ignore_index=True)
         .sort_values(["Date", "GID_2"])
         .reset_index(drop=True)
     )
+    result.sort_values(by=["Date", "GID_2"], inplace=True)
+    return result
+
+
+def merge_sources(df, covars: list[str]) -> None:
+    """
+    Merge geographic and climatological covariates into the main DataFrame.
+    This function is a placeholder for actual merging logic.
+    """
+    # Schedule source aggregation tasks (could parallelise this)
+    for covar in covars:
+        df_covar = merge_geo_sources(df, [covar])
+        merge_vars = list(
+            set(["GID_2", "Date"])
+            | (set(df_covar.columns.tolist()) - set(df.columns.tolist()))
+        )
+        df = df.merge(df_covar[merge_vars], on=["GID_2", "Date"], how="left")
+    return df

@@ -20,3 +20,8 @@ def read_nc(*args, **kwargs):
 @task
 def r2(*args, **kwargs):
     return cases.r2(*args, **kwargs)
+
+
+@task
+def run_job(*args, **kwargs):
+    return cases.run_job(*args, **kwargs)
