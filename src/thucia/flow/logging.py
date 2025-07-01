@@ -25,7 +25,7 @@ class PrefectLogRedirectHandler(logging.Handler):
             pass  # prevent cascading failure at shutdown
 
 
-def enable_prefect_logging_redirect(level=logging.INFO):
+def enable_logging(level=logging.INFO):
     """
     Redirect standard logging to Prefect's logger if in a flow/task.
     """

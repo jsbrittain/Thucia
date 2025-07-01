@@ -12,7 +12,7 @@ def task(_func: Callable = None, **task_kwargs):
             persist_result=True,
             cache_key_fn=task_input_hash,
             cache_expiration=timedelta(days=2),
-            retries=1,
+            retries=0,
             log_prints=True,
             **task_kwargs,
         )(func)
@@ -26,7 +26,7 @@ def task(_func: Callable = None, **task_kwargs):
 def flow(_func: Callable = None, **flow_kwargs):
     DEFAULTS = {
         "log_prints": True,
-        "retries": 1,
+        "retries": 0,
     }
 
     def decorator(func: Callable):
