@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from prefect.futures import wait
 from thucia.core import models
 from thucia.core.cases import cases_per_month
 from thucia.core.cases import read_nc
@@ -12,6 +11,7 @@ from thucia.core.geo import merge_sources
 from thucia.core.geo import pad_admin2
 from thucia.core.logging import enable_logging
 from thucia.core.models import run_model
+# from prefect.futures import wait
 # from thucia.core.wrappers import flow
 
 
@@ -22,7 +22,7 @@ enable_logging()
 def run_pipeline(iso3: str, adm1: list[str] | None = None):
     path = (Path("data") / "cases" / iso3).resolve()
 
-    if False:
+    if True:
         # Process case data
         run_job(["python", str(path / "load_cases.py")])
         df = read_nc(path / "cases.nc")
@@ -31,7 +31,7 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
         df = cases_per_month(df)
         df = pad_admin2(df)  # Ensure all Admin-2 regions included for covariate maps
 
-        # ###### we need to add predictors for future months in order to predict cases ######
+        # ###### we need to add predictors for future months in order to predict cases
 
         # Add predictors for future months
         import pandas as pd
@@ -82,14 +82,14 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
 
     # Run models in parallel (submit tasks and wait)
     gid_1 = lookup_gid1(adm1, iso3=iso3) if adm1 else None
-    model_tasks = [
-        run_model("baseline", models.baseline, df, path, gid_1=gid_1),
-        run_model("climate", models.climate, df, path, gid_1=gid_1),
-        run_model("sarima", models.sarima, df, path, gid_1=gid_1),
-        run_model("tcn", models.tcn, df, path, gid_1=gid_1, retrain=False),
-    ]
+    # model_tasks = [
+    (run_model("baseline", models.baseline, df, path, gid_1=gid_1),)
+    (run_model("climate", models.climate, df, path, gid_1=gid_1),)
+    (run_model("sarima", models.sarima, df, path, gid_1=gid_1),)
+    (run_model("tcn", models.tcn, df, path, gid_1=gid_1, retrain=False),)
+    # ]
     # Await forecasts
-    wait(model_tasks)
+    # wait(model_tasks)
 
     # TODO: Ensembles and scoring
 

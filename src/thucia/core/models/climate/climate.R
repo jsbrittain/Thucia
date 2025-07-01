@@ -21,14 +21,10 @@ library(spdep)
 #
 
 
-# Neighbours graph file
-adjacency_graph_file <- file.path(
-  "nbr_PER.graph"  # current working folder (i.e. temporary file)
-)
-
 parser <- ArgumentParser()
 parser$add_argument("--target_date", "-t", help = "Target date")
 parser$add_argument("--input", "-i", help = "Input case data filename")
+parser$add_argument("--gadm", "-g", help = "gpkg file with GID_1 and GID_2 polygons (e.g. /data/gadm41_PER.gpkg)")
 parser$add_argument("--output", "-o", help = "Output filename")
 parser$add_argument("--samples", "-s", type = "integer", default = 1000,
                     help = "Number of samples for posterior distribution")
@@ -37,6 +33,7 @@ xargs <- parser$parse_args()
 
 target_date <- xargs$target_date
 cases_filename <- xargs$input
+gadm_filename <- xargs$gadm
 output_filename <- xargs$output
 samples <- xargs$samples
 adm1 <- xargs$admin1
@@ -203,8 +200,9 @@ predictor_cols <- setdiff(names(cases_dt), "CASES")
 # cases_dt <- cases_dt[complete.cases(cases_dt)]
 
 # Create neighbours object
+adjacency_graph_file <- file.path("nbr.graph")  # cwd (i.e. temporary file)
 log_info("Creating adjacency graph: {adjacency_graph_file}")
-provinces_sf <- st_read("/data/gadm41_PER.gpkg", layer="ADM_ADM_2")
+provinces_sf <- st_read(gadm_filename, layer="ADM_ADM_2")
 provinces_sf <- subset(provinces_sf, provinces_sf$GID_1 %in% adm1)
 nb <- poly2nb(st_make_valid(provinces_sf), queen = TRUE)
 nb2INLA(file = adjacency_graph_file, nb)
