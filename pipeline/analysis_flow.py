@@ -83,10 +83,10 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
     # Run models in parallel (submit tasks and wait)
     gid_1 = lookup_gid1(adm1, iso3=iso3) if adm1 else None
     model_tasks = [
-        run_model.submit("baseline", models.baseline, df, path, gid_1=gid_1),
-        run_model.submit("climate", models.climate, df, path, gid_1=gid_1),
-        run_model.submit("sarima", models.sarima, df, path, gid_1=gid_1),
-        run_model.submit("tcn", models.tcn, df, path, gid_1=gid_1, retrain=False),
+        run_model("baseline", models.baseline, df, path, gid_1=gid_1),
+        run_model("climate", models.climate, df, path, gid_1=gid_1),
+        run_model("sarima", models.sarima, df, path, gid_1=gid_1),
+        run_model("tcn", models.tcn, df, path, gid_1=gid_1, retrain=False),
     ]
     # Await forecasts
     wait(model_tasks)

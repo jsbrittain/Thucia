@@ -145,8 +145,7 @@ def run_in_podman(image, command, volumes={}, remove=True, *args, **kwargs):
             logs.append(decoded_line)
 
         # Wait for the container to finish
-        result = container.wait()
-        exitcode = result.get("StatusCode", 1)
+        exitcode = container.wait()
 
         if exitcode == 0:
             logging.info("Container ran successfully")
