@@ -22,14 +22,14 @@ def weighted_pinball_loss(weights, predictions, truths, quantiles):
     return loss
 
 
-def train_ensemble(predictions_dict, true_values, quantiles):
+def train_ensemble(predictions_dict, cases, quantiles):
     models = list(predictions_dict.keys())
     model_preds = np.stack(
         [predictions_dict[m] for m in models], axis=0
     )  # shape: (n_models, n_samples, n_quantiles)
     n_models = len(models)
 
-    assert model_preds.shape[1:] == true_values.shape, (
+    assert model_preds.shape[1:] == cases.shape, (
         "Mismatch in prediction and truth shape"
     )
 
@@ -38,7 +38,7 @@ def train_ensemble(predictions_dict, true_values, quantiles):
     result = minimize(
         fun=weighted_pinball_loss,
         x0=init_weights,
-        args=(model_preds, true_values, quantiles),
+        args=(model_preds, cases, quantiles),
         bounds=[(0, 1)] * n_models,
         constraints={"type": "eq", "fun": lambda w: np.sum(w) - 1},
         method="SLSQP",
@@ -68,46 +68,67 @@ def apply_ensemble_weights(predictions_dict, weights_dict):
     return ensemble_pred
 
 
-def prepare_data_for_date(df, date, quantiles):
-    subset = df[df["target_end_date"] == date]
-    locations = subset["location"].unique()
+def merge_model_dfs(model_tasks, model_names=None):
+    """
+    Merge list of model result dataframes and tag with model names.
+    Assumes: each df has columns [Date, GID_2, quantile, prediction, Cases]
+    """
+    merged = []
+    for i, df_model in enumerate(model_tasks):
+        df = df_model.copy()
+        model_name = model_names[i] if model_names else f"model_{i}"
+        df["model"] = model_name
+        merged.append(df)
+    return pd.concat(merged, ignore_index=True)
+
+
+def prepare_data_for_date(df, date, quantiles, require_truth=True):
+    subset = df[df["Date"] == date]
+    GID_2s = subset["GID_2"].unique()
     models = subset["model"].unique()
 
-    true_values_list = []
-    for loc in locations:
-        tv = []
-        for q in quantiles:
-            tv_val = subset[(subset["location"] == loc) & (subset["quantile"] == q)][
-                "true_value"
-            ].unique()
-            if len(tv_val) != 1:
-                raise ValueError(
-                    f"True value for location {loc}, quantile {q} on date {date} missing or duplicated"
+    cases_list = []
+    if require_truth:
+        for loc in GID_2s:
+            tv = []
+            for q in quantiles:
+                tv_val = (
+                    subset[(subset["GID_2"] == loc) & (subset["quantile"] == q)][
+                        "Cases"
+                    ]
+                    .dropna()
+                    .unique()
                 )
-            tv.append(tv_val[0])
-        true_values_list.append(tv)
-    true_values = np.array(true_values_list)
+                if len(tv_val) != 1:
+                    raise ValueError(
+                        f"True value for GID_2 {loc}, quantile {q} on date {date} missing or duplicated. Found: {tv_val}"
+                    )
+                tv.append(tv_val[0])
+            cases_list.append(tv)
+        cases = np.array(cases_list)
+    else:
+        cases = None  # will be ignored downstream
 
     predictions_dict = {}
     for model in models:
         preds_list = []
-        for loc in locations:
+        for loc in GID_2s:
             pred_vals = []
             for q in quantiles:
                 pred_val = subset[
-                    (subset["location"] == loc)
+                    (subset["GID_2"] == loc)
                     & (subset["model"] == model)
                     & (subset["quantile"] == q)
                 ]["prediction"].unique()
                 if len(pred_val) != 1:
                     raise ValueError(
-                        f"Prediction for model {model}, location {loc}, quantile {q} on date {date} missing or duplicated"
+                        f"Prediction for model {model}, GID_2 {loc}, quantile {q} on date {date} missing or duplicated"
                     )
                 pred_vals.append(pred_val[0])
             preds_list.append(pred_vals)
         predictions_dict[model] = np.array(preds_list)
 
-    return predictions_dict, true_values, locations
+    return predictions_dict, cases, GID_2s
 
 
 def iterative_training(df, quantiles, testing_dates):
@@ -116,16 +137,26 @@ def iterative_training(df, quantiles, testing_dates):
 
     for date in testing_dates:
         logger.info(f"Training ensemble weights for {date}")
-        current_preds = df[df["target_end_date"] == date]
+        current_preds = df[df["Date"] == date]
+        current_preds = current_preds.dropna(subset=["prediction", "Cases"])
+
         historical_preds = pd.concat(
             [historical_preds, current_preds], ignore_index=True
         )
+        training_data = historical_preds.dropna(subset=["prediction", "Cases"])
 
-        predictions_dict, true_values, _ = prepare_data_for_date(
-            historical_preds, date, quantiles
+        predictions_dict, cases, _ = prepare_data_for_date(
+            training_data, date, quantiles
         )
-        weights = train_ensemble(predictions_dict, true_values, quantiles)
-        weights["target_end_date"] = date
+
+        if not predictions_dict:
+            logger.warning(
+                f"No valid model predictions available for date {date}. Skipping."
+            )
+            continue
+
+        weights = train_ensemble(predictions_dict, cases, quantiles)
+        weights["Date"] = date
         all_weights.append(weights)
 
     weights_df = pd.DataFrame(all_weights)
@@ -134,8 +165,8 @@ def iterative_training(df, quantiles, testing_dates):
 
 def apply_weights_to_forecasts(df, weights_df, quantiles, lag=1):
     ensemble_forecasts = []
-    sorted_dates = sorted(df["target_end_date"].unique())
-    weights_df = weights_df.sort_values("target_end_date")
+    sorted_dates = sorted(df["Date"].unique())
+    weights_df = weights_df.sort_values("Date")
 
     for i, date in enumerate(sorted_dates):
         lag_index = i - lag
@@ -144,7 +175,7 @@ def apply_weights_to_forecasts(df, weights_df, quantiles, lag=1):
             weights_row = None
         else:
             lag_date = sorted_dates[lag_index]
-            weights_row = weights_df[weights_df["target_end_date"] == lag_date]
+            weights_row = weights_df[weights_df["Date"] == lag_date]
 
         if weights_row is None or weights_row.empty:
             # Equal weights fallback
@@ -153,20 +184,21 @@ def apply_weights_to_forecasts(df, weights_df, quantiles, lag=1):
             weights = {m: 1 / n_models for m in model_names}
             logger.info(f"Using equal weights for date {date} (no lagged weights)")
         else:
-            weights = weights_row.drop("target_end_date", axis=1).iloc[0].to_dict()
+            weights = weights_row.drop("Date", axis=1).iloc[0].to_dict()
 
-        preds_dict, _, locations = prepare_data_for_date(df, date, quantiles)
+        preds_dict, _, GID_2s = prepare_data_for_date(
+            df, date, quantiles, require_truth=False
+        )
         ensemble_pred = apply_ensemble_weights(preds_dict, weights)
 
-        for i_loc, loc in enumerate(locations):
+        for i_loc, loc in enumerate(GID_2s):
             for i_q, q in enumerate(quantiles):
                 ensemble_forecasts.append(
                     {
-                        "location": loc,
-                        "target_end_date": date,
+                        "GID_2": loc,
+                        "Date": date,
                         "quantile": q,
                         "prediction": ensemble_pred[i_loc, i_q],
-                        "model": "trained_ensemble",
                     }
                 )
 
@@ -174,8 +206,8 @@ def apply_weights_to_forecasts(df, weights_df, quantiles, lag=1):
 
 
 def fix_quantile_violations(df, tolerance=1e-8):
-    # Assumes df has columns: location, target_end_date, model, quantile, prediction
-    df = df.sort_values(["location", "target_end_date", "model", "quantile"])
+    # Assumes df has columns: GID_2, Date, model, quantile, prediction
+    df = df.sort_values(["GID_2", "Date", "quantile"])
 
     def fix_group(g):
         preds = g["prediction"].values.copy()
@@ -186,62 +218,33 @@ def fix_quantile_violations(df, tolerance=1e-8):
         return g
 
     df_fixed = (
-        df.groupby(["location", "target_end_date", "model"])
+        df.groupby(["GID_2", "Date"], group_keys=False)
         .apply(fix_group)
         .reset_index(drop=True)
     )
     return df_fixed
 
 
-def example():
-    # Create synthetic example data similar in structure to your R workflow
-    quantiles = [0.1, 0.5, 0.9]
-    dates = pd.date_range("2023-01-01", periods=5, freq="M")
-    locations = ["A", "B"]
-    models = ["tcn", "sarima", "timegpt"]
+def create_ensemble(model_tasks, model_names=None):
+    df_all = merge_model_dfs(model_tasks, model_names)
 
-    rows = []
-    np.random.seed(42)
-    for date in dates:
-        for loc in locations:
-            true_val_median = np.random.poisson(lam=20)
-            true_vals = [
-                true_val_median - 3,
-                true_val_median,
-                true_val_median + 3,
-            ]  # approximate quantiles
-            for model in models:
-                # Add some noise to model predictions around true values
-                preds = np.array(true_vals) + np.random.normal(
-                    0, 2, size=len(quantiles)
-                )
-                preds = np.clip(preds, 0, None)
-                for q, pred, true_v in zip(quantiles, preds, true_vals):
-                    rows.append(
-                        {
-                            "location": loc,
-                            "target_end_date": date,
-                            "model": model,
-                            "quantile": q,
-                            "prediction": pred,
-                            "true_value": true_v,
-                        }
-                    )
-    df = pd.DataFrame(rows)
+    quantiles = sorted(df_all["quantile"].unique())
+    testing_dates = sorted(df_all["Date"].unique())
 
-    logger.info("Starting iterative ensemble training...")
-    weights_df = iterative_training(
-        df, quantiles, sorted(df["target_end_date"].unique())
-    )
-    logger.info("Weights training completed.")
-    print(weights_df)
+    weights_df = iterative_training(df_all, quantiles, testing_dates)
+    logging.info(f"Ensemble weights:\n{weights_df}")
 
-    logger.info("Applying ensemble weights to forecasts...")
-    ensemble_df = apply_weights_to_forecasts(df, weights_df, quantiles)
+    ensemble_df = apply_weights_to_forecasts(df_all, weights_df, quantiles)
     ensemble_df = fix_quantile_violations(ensemble_df)
-    logger.info("Ensemble forecasts created.")
-    print(ensemble_df.head(10))
 
+    # Merge observed case data back in
+    true_values = (
+        df_all[["GID_2", "Date", "quantile", "Cases"]]
+        .dropna(subset=["Cases"])
+        .drop_duplicates(subset=["GID_2", "Date", "quantile"])
+    )
+    ensemble_df = ensemble_df.merge(
+        true_values, on=["GID_2", "Date", "quantile"], how="left"
+    )
 
-if __name__ == "__main__":
-    example()
+    return ensemble_df, weights_df

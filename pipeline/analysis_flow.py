@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import numpy as np
 from thucia.core import models
 from thucia.core.cases import cases_per_month
+from thucia.core.cases import r2
 from thucia.core.cases import read_nc
 from thucia.core.cases import run_job
 from thucia.core.cases import write_nc
@@ -11,6 +13,7 @@ from thucia.core.geo import merge_sources
 from thucia.core.geo import pad_admin2
 from thucia.core.logging import enable_logging
 from thucia.core.models import run_model
+from thucia.core.models.ensemble import create_ensemble
 # from prefect.futures import wait
 # from thucia.core.wrappers import flow
 
@@ -22,7 +25,7 @@ enable_logging()
 def run_pipeline(iso3: str, adm1: list[str] | None = None):
     path = (Path("data") / "cases" / iso3).resolve()
 
-    if True:
+    if False:
         # Process case data
         run_job(["python", str(path / "load_cases.py")])
         df = read_nc(path / "cases.nc")
@@ -35,7 +38,6 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
 
         # Add predictors for future months
         import pandas as pd
-        import numpy as np
 
         last_date = df["Date"].max()
         n_months = 6
@@ -78,20 +80,35 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
         df = add_incidence_rate(df)
         write_nc(df, path / "cases_with_climate.nc")
 
-    df = read_nc(path / "cases_with_climate.nc")
+        df = read_nc(path / "cases_with_climate.nc")
 
-    # Run models in parallel (submit tasks and wait)
-    gid_1 = lookup_gid1(adm1, iso3=iso3) if adm1 else None
-    # model_tasks = [
-    (run_model("baseline", models.baseline, df, path, gid_1=gid_1),)
-    (run_model("climate", models.climate, df, path, gid_1=gid_1),)
-    (run_model("sarima", models.sarima, df, path, gid_1=gid_1),)
-    (run_model("tcn", models.tcn, df, path, gid_1=gid_1, retrain=False),)
-    # ]
-    # Await forecasts
-    # wait(model_tasks)
+        # Run models in parallel (submit tasks and wait)
+        gid_1 = lookup_gid1(adm1, iso3=iso3) if adm1 else None
+        run_model("baseline", models.baseline, df, path, gid_1=gid_1)
+        run_model("climate", models.climate, df, path, gid_1=gid_1)
+        run_model("sarima", models.sarima, df, path, gid_1=gid_1)
+        run_model("tcn", models.tcn, df, path, gid_1=gid_1, retrain=False)
 
-    # TODO: Ensembles and scoring
+        # Ensembles and scoring
+        model_names = ["baseline", "climate", "sarima", "tcn"]
+        model_tasks = []
+        for model in model_names:  # Read in model forecasts
+            model_tasks.append(read_nc(str(path / f"{model}_cases_quantiles.nc")))
+        df, ensemble_weights = create_ensemble(model_tasks)
+        write_nc(df, path / "ensemble_cases_quantiles.nc")
+
+    # Report R2 statistic
+    model_list = ["baseline", "climate", "sarima", "tcn", "ensemble"]
+    for model in model_list:
+        df_model = read_nc(str(path / f"{model}_cases_quantiles.nc"))
+        r2_model = r2(
+            df_model,
+            "prediction",
+            "Cases",
+            transform=np.log1p,
+            df_filter={"quantile": 0.50},
+        )
+        print(f"{model} (R^2): {r2_model:.3f}")
 
 
 # Some pre-defined pipelines...
