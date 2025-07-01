@@ -86,3 +86,53 @@ def plot_all_admin2(
             )
 
     plt.show()
+
+
+def plot_ensemble_weights_over_time(
+    df, date_col="Date", title="Ensemble Weights Over Time", ma_window=None
+):
+    """
+    Plot ensemble weights over time from a wide-format DataFrame, with optional moving average smoothing.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame with one date column and one or more model weight columns.
+        date_col (str): Name of the column containing dates.
+        title (str): Plot title.
+        ma_window (int or None): If set, applies a moving average of the given window size to smooth the lines.
+    """
+    if date_col not in df.columns:
+        raise ValueError(f"'{date_col}' must be a column in the DataFrame")
+
+    # Apply moving average if specified
+    df_plot = df.copy()
+    if ma_window:
+        for col in df_plot.columns:
+            if col != date_col:
+                df_plot[col] = (
+                    df_plot[col].rolling(window=ma_window, min_periods=1).mean()
+                )
+
+    # Convert to long format
+    df_long = df_plot.melt(id_vars=date_col, var_name="model", value_name="weight")
+    df_long = df_long.dropna(subset=["weight"])
+
+    # Plot
+    plt.figure(figsize=(12, 6))
+    for model in df_long["model"].unique():
+        model_data = df_long[df_long["model"] == model]
+        plt.plot(model_data[date_col], model_data["weight"], label=model)
+
+    plt.title(title + (f" (MA Window = {ma_window})" if ma_window else ""))
+    plt.xlabel("Date")
+    plt.ylabel("Weight")
+    plt.legend(title="Model")
+    plt.grid(True)
+
+    # Limit x-axis ticks to years only
+    ax = plt.gca()
+    ax.xaxis.set_major_locator(mdates.YearLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    plt.xticks(rotation=45)
+
+    plt.tight_layout()
+    plt.show()

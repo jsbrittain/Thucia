@@ -29,6 +29,9 @@ parser$add_argument("--output", "-o", help = "Output filename")
 parser$add_argument("--samples", "-s", type = "integer", default = 1000,
                     help = "Number of samples for posterior distribution")
 parser$add_argument("--admin1", help = "GID-1 list, e.g. 'PER.14_1,PER.21_1,PER.25_1'")
+parser$add_argument("--summer",
+                    help = "Summer months (comma-separated, e.g. '12,1,2,3,4')",
+                    default = "12,1,2,3,4")
 xargs <- parser$parse_args()
 
 target_date <- xargs$target_date
@@ -36,15 +39,8 @@ cases_filename <- xargs$input
 gadm_filename <- xargs$gadm
 output_filename <- xargs$output
 samples <- xargs$samples
-adm1 <- xargs$admin1
-
-# target_date = '2021-01-01'
-# cases_filename = '/data/cases_with_climate.nc'
-# output_filename = '/data/climate_cases_samples.csv'
-# samples = 1000
-# adm1 = 'PER.14_1,PER.21_1,PER.25_1'
-
-adm1 <- unlist(strsplit(adm1, ","))  # comma-separated list to list
+adm1 <- unlist(strsplit(xargs$admin1, ","))
+summer_months <- as.integer(unlist(strsplit(xargs$summer, ",")))
 
 df <- as.data.table(hyper_tibble(tidync(cases_filename)))
 # "ADM1"      "ADM2"      "GID_1"     "GID_2"     "Cases"     "tmax"
@@ -77,7 +73,6 @@ date_lookup <- unique(df[, .(Date)])[order(Date)][, TIME := .I]
 df <- merge(df, date_lookup, by = "Date", all.x = TRUE)
 
 # Add additional required columns
-summer_months <- c(12, seq(1, 4))
 df[, `:=`(
   PROV_IND = as.integer(factor(PROVINCE)),
   POP_OFFSET = POP / 1e5,
