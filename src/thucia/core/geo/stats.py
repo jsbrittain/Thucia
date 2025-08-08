@@ -28,9 +28,24 @@ def raster_stats_gid2(tif_file, gid_2s: list[str], stats=["mean"]):
 
     polygons = gpd.read_file(str(file_path), layer="ADM_ADM_2")
     polygons = polygons[polygons["GID_2"].isin(gid_2s)]
-    stats = zonal_stats(polygons, tif_file, stats=stats)
-    for measure in stats[0].keys():
-        polygons[measure] = [stat[measure] for stat in stats]
+    stats_data = zonal_stats(polygons, tif_file, stats=stats)
+    for measure in stats_data[0].keys():
+        polygons[measure] = [stat[measure] for stat in stats_data]
     # Drop geometry
-    polygons = polygons.drop(columns=["geometry"])
+    keep_columns = [
+        "GID_0",
+        "COUNTRY",
+        "GID_1",
+        "NL_NAME_1",
+        "NAME_1",
+        "GID_2",
+        "NL_NAME_2",
+        "NAME_2",
+        "TYPE_2",
+        "ENGTYPE_2",
+        "CC_2",
+        "HASC_2",
+        *stats,
+    ]
+    polygons = polygons[keep_columns]
     return polygons
