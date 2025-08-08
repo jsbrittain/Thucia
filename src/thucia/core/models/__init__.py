@@ -4,12 +4,13 @@ import pandas as pd
 from thucia.core.cases import write_nc
 from thucia.core.geo import convert_to_incidence_rate
 
-from .baseline import baseline as baseline
-from .climate import climate as climate
-from .sarima import sarima as sarima
-from .tcn import tcn as tcn
-from .utils import quantiles as quantiles
-from .utils import samples_to_quantiles as samples_to_quantiles
+from .baseline import baseline  # noqa: F401
+from .inla import inla  # noqa: F401
+from .sarima import sarima  # noqa: F401
+from .tcn import tcn  # noqa: F401
+from .timesfm import timesfm  # noqa: F401
+from .utils import quantiles  # noqa: F401
+from .utils import samples_to_quantiles
 
 
 def run_model(name: str, model_task, df: pd.DataFrame, path: Path, *args, **kwargs):

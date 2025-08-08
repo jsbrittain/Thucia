@@ -157,11 +157,11 @@ def r2(df, pred_col, true_col, transform=None, df_filter: dict = {}):
     return r2
 
 
-def run_job(cmd: list[str]) -> None:
+def run_job(cmd: list[str], cwd: str | None = None) -> None:
     """
     Run a command in a subprocess and wait for it to finish.
     """
 
-    result = subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd, cwd=cwd, check=True)
     if result.returncode != 0:
         raise RuntimeError(f"Command failed with return code {result.returncode}")

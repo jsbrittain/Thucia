@@ -268,6 +268,8 @@ def convert_to_incidence_rate(
     Returns:
     pd.DataFrame: The DataFrame with an additional column for incidence rate.
     """
+    if "pop_count" in df.columns:
+        df.drop(columns=["pop_count"], inplace=True)
     df_with_pop = df.merge(
         df_pop[["Date", "GID_2", "pop_count"]],
         on=["Date", "GID_2"],

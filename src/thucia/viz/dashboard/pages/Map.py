@@ -16,7 +16,7 @@ st.warning("DEVELOPMENT BUILD")
 # --- Sidebar Controls
 countries = {
     "Peru": "PER",
-    # "Brazil": "BRA",
+    "Brazil": "BRA",
     "Mexico": "MEX",
 }
 admin_levels = {
@@ -26,7 +26,8 @@ admin_levels = {
 basemaps = {
     "Light": "light",
     "Dark": "dark",
-    "Satellite": "satellite",
+    # "Satellite": "satellite",
+    "Road": "road",
 }
 colormaps = {
     "CET D8": cc.CET_D8,
@@ -175,7 +176,7 @@ color_white = [255, 255, 255, alpha_value]
 
 # simplify geometry
 geojson["geometry"] = geojson["geometry"].simplify(
-    tolerance=0.01, preserve_topology=True
+    tolerance=0.001, preserve_topology=True
 )
 
 geojson["data"] = ["-"] * len(geojson)
@@ -184,6 +185,10 @@ geojson["fill_color"] = [color_white] * len(geojson)
 
 min_data = np.nanmin(list(model_data.values()))
 max_data = np.nanmax(list(model_data.values()))
+if min_data == max_data:
+    min_data = 0
+if min_data == max_data:
+    max_data = 1
 if max_data > 0:
     color_white = [255, 255, 255, alpha_value]
     for i, line in geojson.iterrows():
@@ -209,9 +214,10 @@ def compute_zoom(minx, maxx):
 
 
 map_style = {
-    "light": "mapbox://styles/mapbox/light-v11",
-    "dark": "mapbox://styles/mapbox/dark-v11",
-    "satellite": "mapbox://styles/mapbox/satellite-streets-v12",
+    "light": "light",  # "mapbox://styles/mapbox/light-v11",
+    "dark": "dark",  # "mapbox://styles/mapbox/dark-v11",
+    "satellite": "satellite",  # "mapbox://styles/mapbox/satellite-streets-v12",
+    "road": "road",
 }[basemap]
 
 # --- Create layer
@@ -241,6 +247,7 @@ elif admin_level == "ADM2":
 # --- Show map
 deck = pdk.Deck(
     layers=[layer],
+    map_provider="carto",  # carto, mapbox or google_maps
     map_style=map_style,
     tooltip=tooltip,
 )

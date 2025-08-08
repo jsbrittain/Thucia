@@ -10,7 +10,7 @@ from thucia.core.containers import run_in_container
 from thucia.core.fs import cache_folder
 
 
-def climate(
+def inla(
     df: pd.DataFrame,
     gid_1: list[str] | None = None,
 ) -> pd.DataFrame:
@@ -21,7 +21,7 @@ def climate(
     iso3 = iso3s[0]
 
     # File paths
-    climate_path = Path(inspect.getfile(climate)).parent / "climate"
+    climate_path = Path(inspect.getfile(inla)).parent / "inla"
     data_path = (
         Path(inspect.getfile(thucia)).parent.parent.parent / "data" / "cases" / iso3
     )
