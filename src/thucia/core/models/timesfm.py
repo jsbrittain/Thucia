@@ -6,26 +6,34 @@ from timesfm import TimesFm
 from timesfm import TimesFmCheckpoint
 from timesfm import TimesFmHparams
 
+from .utils import filter_admin1
+from .utils import interpolate_missing_dates
+from .utils import set_historical_na_to_zero
+
 
 class TimeSFMSamples:
     def __init__(
         self,
         timeseries_df: pd.DataFrame,
         case_col: str,
-        withheld_months: int,
-        dynamic_numerical_cols: list,
-        dynamic_categorical_cols: list,
-        static_categorical_col: str,
-        context_len: int = 24,
+        dynamic_numerical_cols: list[str] = [],
+        dynamic_categorical_cols: list[str] = [],
+        static_numerical_covariates: list[str] = [],
+        static_categorical_cols: list[str] = [],
+        per_core_batch_size: int = 32,
+        num_layers: int = 50,
+        context_len: int = 32,
         horizon_len: int = 1,
         num_samples: int = 1000,
     ):
         self.df = timeseries_df.copy()
         self.case_col = case_col
-        self.withheld_months = withheld_months
         self.dynamic_numerical_cols = dynamic_numerical_cols
         self.dynamic_categorical_cols = dynamic_categorical_cols
-        self.static_categorical_col = static_categorical_col
+        self.static_numerical_covariates = static_numerical_covariates
+        self.static_categorical_cols = static_categorical_cols
+        self.per_core_batch_size = per_core_batch_size
+        self.num_layers = num_layers
         self.context_len = context_len
         self.horizon_len = horizon_len
         self.num_samples = num_samples
@@ -33,12 +41,12 @@ class TimeSFMSamples:
         self.model = TimesFm(
             hparams=TimesFmHparams(
                 backend="cpu",
-                per_core_batch_size=32,
-                horizon_len=12,
-                num_layers=50,
-                context_len=2048,
-                use_positional_embedding=False,
-                # quantiles cant seem to from their defaults
+                context_len=self.context_len,
+                horizon_len=self.horizon_len,
+                num_layers=self.num_layers,
+                per_core_batch_size=self.per_core_batch_size,
+                use_positional_embedding=True,
+                # cant seem to alter quantiles from their defaults
                 # quantiles=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),  # default
                 # quantiles=(0.01, 0.025, *list(np.arange(0.05, 1.0, 0.05)), 0.975, 0.99),
             ),
@@ -47,12 +55,6 @@ class TimeSFMSamples:
             ),
         )
 
-    def _filter_df(self, df_filter: dict) -> pd.DataFrame:
-        df = self.df.copy()
-        for k, v in df_filter.items():
-            df = df[df[k] == v]
-        return df.sort_values("Date").reset_index(drop=True)
-
     def sample_from_quantiles(
         self,
         quantiles: np.ndarray,
@@ -60,10 +62,12 @@ class TimeSFMSamples:
         num_samples: int = 1000,
     ):
         """
-        Simulate samples from a discrete quantile forecast using inverse transform sampling.
+        Simulate samples from a discrete quantile forecast using inverse transform
+        sampling.
+
         Args:
-            quantiles: np.array of shape [num_quantiles], e.g., forecasted values at 10%-90%
-            quantile_levels: np.array of quantile probabilities, e.g., [0.1, 0.2, ..., 0.9]
+            quantiles: np.array of shape [num_quantiles], e.g., at 10%-90%
+            quantile_levels: np.array of quantile probabilities, e.g., [0.1, ..., 0.9]
             num_samples: Number of samples to generate
         Returns:
             np.array of samples
@@ -71,83 +75,98 @@ class TimeSFMSamples:
         uniform_samples = np.random.uniform(0, 1, size=num_samples)
         return np.interp(uniform_samples, quantile_levels, quantiles)
 
-    def historical_forecast(self, df_filter: dict) -> pd.DataFrame:
-        logging.info(f"[Historical] Processing filter: {df_filter}")
-        df = self._filter_df(df_filter).iloc[: -self.withheld_months].copy()
+    @property
+    def use_covariates(self) -> bool:
+        return bool(
+            self.dynamic_numerical_cols
+            or self.dynamic_categorical_cols
+            or self.static_numerical_covariates
+            or self.static_categorical_cols
+        )
 
+    def predict(self, sigma: float = 0.0) -> pd.DataFrame:
         predictions = []
-        for i in range(self.context_len, len(df) - self.horizon_len + 1):
-            logging.info(f"Processing index {i} for historical forecast.")
-            context = df.iloc[i - self.context_len : i]
-            future = df.iloc[i : i + self.horizon_len]
+        df = self.df
 
-            inputs = context[self.case_col].tolist()
+        if len(df) < 2:  # (self.horizon_len + self.context_len):
+            logging.warning(f"Insufficient data (n={len(df)}) for TimeSFM model. ")
+            df["sample"] = np.nan
+            df["prediction"] = np.nan
+            return df
 
+        # Time-series target series should not cover the horizon period
+        inputs = df[self.case_col][: -self.horizon_len].tolist()
+
+        if self.use_covariates:
+            logging.debug("TimeSFM with covariates forecasting...")
+
+            # Prepare covariates
             dynamic_numerical = {
-                col: [df[col].iloc[-(self.context_len + self.horizon_len) :].tolist()]
-                for col in self.dynamic_numerical_cols
+                col: [df[col].tolist()] for col in self.dynamic_numerical_cols
             }
             dynamic_categorical = {
-                col: [df[col].iloc[-(self.context_len + self.horizon_len) :].tolist()]
-                for col in self.dynamic_categorical_cols
+                col: [df[col].tolist()] for col in self.dynamic_categorical_cols
+            }
+            static_numerical = {
+                col: df[col].iloc[-1] for col in self.static_numerical_covariates
             }
             static_categorical = {
-                self.static_categorical_col: [df[self.static_categorical_col].iloc[i]]
+                col: df[col].iloc[-1] for col in self.static_categorical_cols
             }
 
-            use_covar = dynamic_numerical or dynamic_categorical or static_categorical
-
-            if use_covar:
-                # Covariate support, but no quantiles (simulate from residuals)
-                forecast, ols_forecast = self.model.forecast_with_covariates(
-                    inputs=[inputs],
-                    dynamic_numerical_covariates=dynamic_numerical,
-                    dynamic_categorical_covariates=dynamic_categorical,
-                    static_numerical_covariates={},
-                    static_categorical_covariates=static_categorical,
-                    freq=[0],
-                    xreg_mode="xreg + timesfm",
-                )
-                # forecast is a list of array() with a single element
-
+            # Covariate support, but no quantiles (simulate from residuals)
+            forecasts, ols_forecasts = self.model.forecast_with_covariates(
+                inputs=[inputs],
+                dynamic_numerical_covariates=dynamic_numerical,
+                dynamic_categorical_covariates=dynamic_categorical,
+                static_numerical_covariates=static_numerical,
+                static_categorical_covariates=static_categorical,
+                freq=[1],  # use 1 for monthly data
+                xreg_mode="xreg + timesfm",
+            )
+            # forecast is a list of array() with horizon_len elements
+            for forecast, date in zip(forecasts[0], df["Date"][-self.horizon_len :]):
                 # Simulate samples from normal distribution
-                # residuals = 0  # requires historical forecasting #######################
-                sigma = 0.1  # np.std(residuals)
-                mu = forecast[0][0]
+                mu = forecast
                 samples = np.random.normal(loc=mu, scale=sigma, size=self.num_samples)
 
                 predictions.extend(
                     [
                         {
-                            "Date": future["Date"].values[0],
+                            "Date": date,
                             "sample": ix,
-                            "prediction": np.expm1(sample),
+                            "prediction": sample,
                         }
                         for ix, sample in enumerate(samples)
                     ]
                 )
-            else:
-                # No covariates, but (limited) quantiles (mean, 0.1, 0.2, ..., 0.9)
+        else:
+            # No covariates, but (limited) quantiles (mean, 0.1, 0.2, ..., 0.9)
+            logging.debug("TimeSFM without covariates forecasting...")
 
-                # ### This routine forecasts multiple steps ahead - need to control ###
-                forecast, quantile_forecast = self.model.forecast(
-                    inputs=[inputs],
-                    freq=[0],
-                )
+            # Forecast to horizon_len
+            forecasts, quantile_forecasts = self.model.forecast(
+                inputs=[inputs],
+                freq=[1],  # use 1 for monthly data
+            )
 
+            # forecast is a list of array() with horizon_len elements
+            for forecast, nstep in zip(forecasts[0], range(self.horizon_len)):
+                date = df["Date"].iloc[-self.horizon_len + nstep]
                 # Simulate samples from residuals
                 samples = self.sample_from_quantiles(
-                    # [first(only) series][one month ahead prediction][quantiles]
-                    quantiles=quantile_forecast[0][0][1:],
+                    # [first(only) series][n-step][quantiles]
+                    quantiles=quantile_forecasts[0][nstep][1:],
                     quantile_levels=self.model.hparams.quantiles,
                     num_samples=1000,
                 )
+
                 predictions.extend(
                     [
                         {
-                            "Date": future["Date"].values[0],
+                            "Date": date,
                             "sample": ix,
-                            "prediction": np.expm1(sample),
+                            "prediction": sample,
                         }
                         for ix, sample in enumerate(samples)
                     ]
@@ -155,15 +174,8 @@ class TimeSFMSamples:
 
         pred_df = pd.DataFrame(predictions)
         merged = pd.merge(df, pred_df, on="Date", how="left")
-        logging.info("Finished historical forecast.")
+        logging.debug("Finished historical forecast.")
         return merged
-
-    def rolling_forecast(self, df_filter: dict) -> pd.DataFrame:
-        logging.info(f"[Rolling] Processing filter: {df_filter}")
-        raise NotImplementedError(
-            "Rolling forecast is not implemented yet. "
-            "Please use historical_forecast method."
-        )
 
 
 def timesfm(
@@ -175,31 +187,10 @@ def timesfm(
 ) -> pd.DataFrame:
     logging.info("Starting TimeSFM model...")
 
-    # Admin-1 filter
-    if gid_1 is not None:
-        df = df[df["GID_1"].isin(gid_1)]
-
-    # Determine start and end dates
-    start_date = max(pd.to_datetime(start_date), df["Date"].min())
-    end_date = min(pd.to_datetime(end_date), df["Date"].max())
-
-    # Interpolate date range, ensuring we don't skip any gaps in the data
-    date_range = pd.date_range(start=start_date, end=end_date, freq="ME")
-
-    # Ensure dates are aligned to the end of the month
-    date_range += pd.offsets.MonthEnd(0)  # Ensure we reset to the end of the month
-    df.loc[:, "Date"] = pd.to_datetime(df["Date"]) + pd.offsets.MonthEnd(0)
-
-    # Combine Cases over Status=Confirmed, Probable
-    # df = df.groupby(["Date", "GID_2"]).agg({"Cases": "sum"}).reset_index()
-
-    # Interpolate missing dates
-    multi_index = pd.MultiIndex.from_product(
-        [df["GID_2"].unique(), date_range], names=["GID_2", "Date"]
-    )
-    df = df.set_index(["GID_2", "Date"]).reindex(multi_index).reset_index()
-
-    df["Cases"] = df["Cases"].fillna(0)
+    df = df.copy()
+    df = filter_admin1(df, gid_1=gid_1)
+    df = interpolate_missing_dates(df, start_date, end_date)
+    df = set_historical_na_to_zero(df)
 
     # Apply log transform for TimeSFM modeling
     df["Log_Cases"] = np.log1p(df["Cases"])
@@ -216,42 +207,96 @@ def timesfm(
     )
     df["LAG_1_prec_roll_2"] = df.groupby("GID_2")["prec_roll_2"].shift(1)
 
-    provinces = df["GID_2"].unique()
+    # Instantiate TimeSFM model
     timesfm = TimeSFMSamples(
         timeseries_df=df,
         case_col="Log_Cases",
-        withheld_months=12,
         dynamic_numerical_cols=[
             "LAG_1_LOG_CASES",
             "LAG_1_tmin_roll_2",
             "LAG_1_prec_roll_2",
         ],
         dynamic_categorical_cols=["MONTH"],
-        static_categorical_col="GID_2",
-        context_len=24,
+        # static_categorical_cols=["GID_2"],
         horizon_len=1,
     )
 
+    # Loop over provinces
     all_forecasts = []
+    provinces = df["GID_2"].unique()
+    dates = sorted(df["Date"].unique())
     for ix, province in enumerate(provinces):
         logging.info(
             f"Processing province {province} ({ix + 1}/{len(provinces)}) "
             "for TimeSFM model"
         )
-        region_filter = {"GID_2": province}
 
-        if method == "historical":
-            df_forecast = timesfm.historical_forecast(df_filter=region_filter)
-        elif method == "predict":
-            df_forecast = timesfm.rolling_forecast(df_filter=region_filter)
-        else:
-            raise ValueError(f"Invalid method: {method}.")
+        # Initialize the first forecast with NaN
+        all_forecasts.append(
+            pd.DataFrame(
+                {
+                    "Date": [dates[0]],
+                    "GID_2": [province],
+                    "sample": [0],
+                    "prediction": [np.nan],  # initial prediction is NaN
+                    "Cases": [
+                        df.loc[(df["Date"] == dates[0]) & (df["GID_2"] == province)][
+                            "Cases"
+                        ].values[0]
+                    ],
+                }
+            )
+        )
 
-        # Append to master list
-        all_forecasts.append(df_forecast)
+        # Generate successive historical forecasts
+        for date in dates[1:]:  # TimeSFM requires at least 2 data points
+            logging.info(
+                f"Processing date {date.strftime('%Y-%m-%d')} for province {province}"
+            )
+            # Subset data
+            subset_df = df.copy()
+            subset_df = subset_df[subset_df["GID_2"] == province]
+            subset_df = subset_df[subset_df["Date"] <= date]
+            subset_df = subset_df.fillna(
+                0
+            )  # TimeSFM cannot cope with NaN covariates #################
+            timesfm.df = subset_df
+            # Fit model
+            df_forecast = timesfm.predict(
+                sigma=0.1
+            )  # ### Estimate sigma from past residuals
+            # Overwrite Log_Cases with median prediction if marked 'future'
+            if subset_df["future"].iloc[-1]:
+                df.loc[
+                    (df["Date"] == date) & (df["GID_2"] == province), "Log_Cases"
+                ] = np.median(
+                    df_forecast.loc[
+                        (df_forecast["Date"] == date)
+                        & (df_forecast["GID_2"] == province),
+                        "prediction",
+                    ]
+                )
+                logging.debug(
+                    f"Backfilling Log_Cases for {date} in {province} with "
+                    f"{df.loc[(df['Date'] == date) & (df['GID_2'] == province), 'Log_Cases']}"
+                )
+            # Append to master list
+            df_forecast.loc[df_forecast["future"], "Cases"] = np.nan
+            all_forecasts.append(
+                df_forecast[df_forecast["Date"] == date][
+                    ["Date", "GID_2", "sample", "prediction", "Cases"]
+                ]
+            )
 
-    # Concatenate all provinces' forecasts into a single DataFrame
+    # Concatenate all province forecasts into a single DataFrame
     forecast_results = pd.concat(all_forecasts, ignore_index=True)
+
+    # Inverse log transform
+    forecast_results["prediction"] = np.clip(
+        np.expm1(forecast_results["prediction"]),
+        a_min=0,
+        a_max=None,
+    )
 
     logging.info("TimeSFM model complete.")
     return forecast_results

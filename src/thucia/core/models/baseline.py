@@ -4,6 +4,10 @@ from typing import List
 import numpy as np
 import pandas as pd
 
+from .utils import filter_admin1
+from .utils import interpolate_missing_dates
+from .utils import set_historical_na_to_zero
+
 
 class BaselineSamples:
     def __init__(self, inc_diffs: List[float] | np.array, symmetrize: bool = True):
@@ -75,33 +79,10 @@ def baseline(
 ):  # DataFrame with columns: GID_2, Date, sample, prediction, Cases, future
     logging.info("Starting baseline model...")
 
-    # Admin-1 filter
-    if gid_1 is not None:
-        df = df[df["GID_1"].isin(gid_1)]
-
-    # Determine start and end dates
-    df.loc[:, "Date"] = pd.to_datetime(df["Date"]) + pd.offsets.MonthEnd(0)
-    start_date = max(
-        pd.to_datetime(start_date), df["Date"].min()
-    ) + pd.offsets.MonthEnd(0)
-    end_date = min(pd.to_datetime(end_date), df["Date"].max()) + pd.offsets.MonthEnd(0)
-    date_range = pd.date_range(start=start_date, end=end_date, freq="ME")
-
-    # Check that (Date, GID_2) combinations are unique
-    if df[["Date", "GID_2"]].duplicated().any():
-        raise ValueError(
-            "DataFrame contains duplicate (Date, GID_2) combinations. "
-            "Ensure that the data is aggregated correctly."
-        )
-
-    # Interpolate missing dates
-    multi_index = pd.MultiIndex.from_product(
-        [df["GID_2"].unique(), date_range], names=["GID_2", "Date"]
-    )
-    df = df.set_index(["GID_2", "Date"]).reindex(multi_index).reset_index()
-
-    # Treat historical NA cases as zero
-    df.loc[~df["future"], "Cases"] = df.loc[~df["future"], "Cases"].fillna(0)
+    df = df.copy()
+    df = filter_admin1(df, gid_1)
+    df = interpolate_missing_dates(df, start_date, end_date)
+    df = set_historical_na_to_zero(df)
 
     # Loop over regions
     df_samples = []

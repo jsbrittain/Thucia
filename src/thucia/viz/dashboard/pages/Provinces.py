@@ -14,7 +14,7 @@ st.warning("DEVELOPMENT BUILD")
 # --- Sidebar Controls
 countries = {
     "Peru": "PER",
-    # "Brazil": "BRA",
+    "Brazil": "BRA",
     "Mexico": "MEX",
 }
 metrics = {
