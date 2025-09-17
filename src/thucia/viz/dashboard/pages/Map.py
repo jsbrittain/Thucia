@@ -83,7 +83,13 @@ case_data = read_nc(str(data_folder / "cases_with_climate.nc"))  # base dataset
 
 # Now read model predictions and merge with case data
 prediction_data = read_nc(casedata_filename)
-if "quantile" in prediction_data.columns.tolist():
+
+if "horizon" in prediction_data.columns:
+    # If horizons are present, we take the 1-step ahead prediction
+    prediction_data = prediction_data[prediction_data["horizon"] == 1]
+    prediction_data = prediction_data.drop(columns=["horizon"])
+
+if "quantile" in prediction_data.columns:
     # If quantiles are present, we take the median
     prediction_data = prediction_data[prediction_data["quantile"] == 0.5]
     prediction_data = prediction_data.drop(columns=["quantile"])
@@ -92,7 +98,7 @@ if "quantile" in prediction_data.columns.tolist():
         on=["Date", "GID_2"],
         how="left",
     )
-if "sample" in prediction_data.columns.tolist():
+if "sample" in prediction_data.columns:
     # If samples are present, we take the median
     prediction_data = prediction_data.groupby(["Date", "GID_2"]).median().reset_index()
     case_data = case_data.merge(

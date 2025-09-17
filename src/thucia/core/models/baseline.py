@@ -71,8 +71,8 @@ def baseline(
     end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: list[str] | None = None,
     samples: int = 1000,
+    horizon: int = 1,
     # --- Model parameters ---
-    step_ahead: int = 1,
     symmetrize: bool = True,
 ) -> (
     pd.DataFrame
@@ -83,6 +83,8 @@ def baseline(
     df = filter_admin1(df, gid_1)
     df = interpolate_missing_dates(df, start_date, end_date)
     df = set_historical_na_to_zero(df)
+
+    step_ahead = horizon  # Align naming
 
     # Loop over regions
     df_samples = []

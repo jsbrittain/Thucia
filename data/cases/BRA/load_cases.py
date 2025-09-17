@@ -17,7 +17,7 @@ from thucia.core.geo import align_admin2_regions
 # 7 digit SSRRMMM (SS = state, RR = region, MMM = municipality)
 
 # States to query (None or [] for all, noting there are 5571 municipalities in Brazil)
-default_states = ["Acre"]  # Acre contains 22 municipalities
+default_states = []  # Acre contains 22 municipalities
 
 # URL for the municipality codes (zip file)
 # see https://www.ibge.gov.br/explica/codigos-dos-municipios.php
@@ -37,7 +37,7 @@ def download_municipality_codes():
     if not url:
         raise Exception("Municipality codes are missing and URL is not set")
     logging.info(f"Downloading {url}")
-    response = requests.get(url)
+    response = requests.get(url, timeout=30)
     if response.status_code != 200:
         raise Exception(f"Error downloading file: {response.status_code}")
     with ZipFile(BytesIO(response.content)) as zip_file:
@@ -100,7 +100,14 @@ def query_state(geocode, ey_start=None, ew_start=None, ey_end=None, ew_end=None)
         f"with url: {full_url}"
     )
 
-    response = requests.get(full_url)
+    # Query the API with retries
+    for _ in range(5):
+        try:
+            response = requests.get(full_url, timeout=30)  # 30 second timeout
+            break
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"Request error for state {geocode}: {e}, retrying...")
+            continue
     if response.status_code != 200:
         raise Exception(f"Error fetching data: {response.status_code}")
 
@@ -111,7 +118,8 @@ def query_state(geocode, ey_start=None, ew_start=None, ey_end=None, ew_end=None)
     # Read data into a DataFrame
     df = pd.read_json(StringIO(response.text))
     if df.empty:
-        raise Exception("No data returned from the API")
+        # raise Exception("No data returned from the API")
+        return df
 
     # Convert epi-week to month/year
     df["week_start"] = pd.to_datetime(df["data_iniSE"], unit="ms")
@@ -135,6 +143,9 @@ def query_states(geocodes, *args, **kwargs):
     for ix, geocode in enumerate(geocodes, start=1):
         logging.info(f"Querying state {geocode} ({ix} / {len(geocodes)})")
         df_state = query_state(geocode, *args, **kwargs)
+        if df_state.empty:
+            logging.warning(f"No data returned for state {geocode}")
+            continue
         df_state["geocode"] = geocode
         df.append(df_state)
     df = pd.concat(df, ignore_index=True)
@@ -207,6 +218,7 @@ def main():
         },
         inplace=True,
     )
+    write_nc(df, "cases_prealign.nc")
     df = align_admin2_regions(df, "ADM1", "ADM2", iso3="BRA")
     write_nc(df)  # ADM1, ADM2, (Status, Cases), Date, GID_1, GID_2
     return df

@@ -189,7 +189,7 @@ class WorldClim(SourceBase):
         df: pd.DataFrame,
         metrics: list[str] | None = None,
         measures: list[str] | None = None,
-        use_cache: bool = True,
+        use_cache: bool = False,
     ) -> pd.DataFrame:
         logging.info("Merging climate data with case data...")
 

@@ -1,9 +1,11 @@
 import logging
+import os
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
 from darts import TimeSeries
-from darts.models import AutoARIMA
+ from darts.models import AutoARIMA
 from darts.utils.timeseries_generation import datetime_attribute_timeseries
 
 
@@ -15,12 +17,16 @@ class SarimaSamples:
         withheld_months,
         num_samples=1000,
         season_length=12,
+        horizon=1,
+        covariates=None,
     ):
         self.df = timeseries_df
         self.case_col = case_col
         self.withheld_months = withheld_months
         self.num_samples = num_samples
         self.season_length = season_length
+        self.horizon = horizon
+        self.covariates = covariates if covariates is not None else []
 
     def historical_forecast(self, df_filter: dict) -> pd.DataFrame:
         """
@@ -45,14 +51,26 @@ class SarimaSamples:
             value_cols=[self.case_col],
         )
 
+        if self.covariates:
+            covs = TimeSeries.from_dataframe(
+                province_df,
+                time_col="Date",
+                value_cols=self.covariates,
+                freq="ME",
+            )
+        else:
+            covs = None
+
         model = AutoARIMA(season_length=self.season_length)
-        model.fit(series)
+        model.fit(series, future_covariates=covs)
 
         backtest = model.historical_forecasts(
             series=series,
-            forecast_horizon=1,
+            forecast_horizon=self.horizon,
             num_samples=self.num_samples,
             verbose=True,
+            future_covariates=covs,
+            # retrain=False,
         )
 
         # Convert predictions to DataFrame
@@ -157,12 +175,13 @@ class SarimaSamples:
         return merged
 
 
-def sarima(
+def sarima_old(
     df: pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: list[str] | None = None,
     method: str = "historical",  # historical / predict
+    horizon: int = 1,
 ) -> pd.DataFrame:
     logging.info("Starting SARIMA model...")
 
@@ -182,7 +201,17 @@ def sarima(
     df.loc[:, "Date"] = pd.to_datetime(df["Date"]) + pd.offsets.MonthEnd(0)
 
     # Combine Cases over Status=Confirmed, Probable
-    df = df.groupby(["Date", "GID_2"]).agg({"Cases": "sum"}).reset_index()
+    df = (
+        df.groupby(["Date", "GID_2"])
+        .agg(
+            {
+                "Cases": "sum",
+                "tmin": "mean",
+                "prec": "mean",
+            }
+        )
+        .reset_index()
+    )
 
     # Interpolate missing dates
     multi_index = pd.MultiIndex.from_product(
@@ -191,39 +220,55 @@ def sarima(
     df = df.set_index(["GID_2", "Date"]).reindex(multi_index).reset_index()
 
     df["Cases"] = df["Cases"].fillna(0)
-
-    # Apply log transform for SARIMA modeling
     df["Log_Cases"] = np.log1p(df["Cases"])
+
+    # Load and merge covariates
+    covariates = ["LAG_1_LOG_CASES", "LAG_1_tmin_roll_2", "LAG_1_prec_roll_2"]
+    df["LAG_1_LOG_CASES"] = df.groupby("GID_2")["Log_Cases"].shift(1).fillna(0)
+    df["LAG_1_tmin_roll_2"] = (
+        df.groupby("GID_2")["tmin"].shift(1).rolling(window=2).mean().fillna(0)
+    )
+    df["LAG_1_prec_roll_2"] = (
+        df.groupby("GID_2")["prec"].shift(1).rolling(window=2).mean().fillna(0)
+    )
 
     provinces = df["GID_2"].unique()
     sarima = SarimaSamples(
         timeseries_df=df,
         case_col="Log_Cases",
         withheld_months=12,
+        horizon=horizon,
         num_samples=1000,
+        covariates=covariates,
     )
 
-    all_forecasts = []
-    for ix, province in enumerate(provinces):
-        logging.info(
-            f"Processing province {province} ({ix + 1}/{len(provinces)}) "
-            "for SARIMA model"
-        )
-        region_filter = {"GID_2": province}
-
-        if method == "historical":
-            # Historical forecast
-            df_forecast = sarima.historical_forecast(df_filter=region_filter)
-        elif method == "predict":
-            # Rolling forecast
-            df_forecast = sarima.rolling_forecast(df_filter=region_filter)
-        else:
-            raise ValueError(
-                f"Unknown method: {method}. Use 'historical' or 'predict'."
+    futures = []
+    max_workers = os.cpu_count() - 1 or 1
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for ix, province in enumerate(provinces):
+            logging.info(
+                f"Processing province {province} ({ix + 1}/{len(provinces)}) "
+                "for SARIMA model"
             )
+            region_filter = {"GID_2": province}
 
-        # Append to master list
-        all_forecasts.append(df_forecast)
+            if method == "historical":
+                # Historical forecast
+                futures.append(
+                    executor.submit(sarima.historical_forecast, df_filter=region_filter)
+                )
+            elif method == "predict":
+                # Rolling forecast
+                futures.append(
+                    executor.submit(sarima.rolling_forecast, df_filter=region_filter)
+                )
+            else:
+                raise ValueError(
+                    f"Unknown method: {method}. Use 'historical' or 'predict'."
+                )
+
+        all_forecasts = [f.result() for f in futures]
 
     # Concatenate all provinces' forecasts into a single DataFrame
     forecast_results = pd.concat(all_forecasts, ignore_index=True)

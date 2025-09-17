@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 from darts import TimeSeries
 from darts.dataprocessing.transformers import Scaler
-from darts.models import TCNModel
+from darts.models import NBEATSModel
 from darts.utils.likelihood_models import GaussianLikelihood  # enables sampling
 
 try:
@@ -22,7 +22,7 @@ torch.set_default_dtype(torch.float32)
 torch.set_num_threads(max(1, (os.cpu_count() or 2) - 1))  # safe
 
 
-class TCNSamples:
+class NbeatsSamples:
     def __init__(
         self,
         timeseries_df: pd.DataFrame,
@@ -52,22 +52,17 @@ class TCNSamples:
         self.covar_scaler = Scaler()
         self.target_scaler = None  # optional
 
-        # --- (past-covariates) ---
-        self.model = TCNModel(
-            input_chunk_length=48,  # how many past steps the model can see
-            output_chunk_length=self.horizon,  # how many future steps the model predicts at once
-            kernel_size=3,
-            num_filters=4,
-            dropout=0.2,  # enables MC dropout
-            random_state=42,
+        # --- N-BEATS model (past-covariates) ---
+        self.model = NBEATSModel(
+            input_chunk_length=self.input_chunk_length,
+            output_chunk_length=1,
+            dropout=0.2,  # MC dropout also adds stochasticity
+            generic_architecture=True,  # default; works well for pooled/global
             likelihood=GaussianLikelihood(),  # sampling supported
-            save_checkpoints=False,
-            force_reset=True,
+            random_state=42,
             n_epochs=150,
             batch_size=64,
-            optimizer_kwargs={
-                "lr": 1e-4,
-            },
+            force_reset=True,
         )
         self._fitted = False
         self._targets_by_gid: Dict[str, TimeSeries] = {}
@@ -300,7 +295,7 @@ def extract_oos_for_adapter_from_model(
     train_only: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Build OOS residual training tables from a fitted pooled model (your TCNSamples instance).
+    Build OOS residual training tables from a fitted pooled model (your NbeatsSamples instance).
     Returns:
         pred_train_df: Date, GID_2, y_pred  (same scale as model_obj.target_col)
         y_df:          Date, GID_2, y_true  (same scale as model_obj.target_col)
@@ -364,56 +359,55 @@ def extract_oos_for_adapter_from_model(
     return pred_train_df, y_df
 
 
-def tcn(
+def nbeats(
     df: pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: list[str] | None = None,
     horizon: int = 1,
     pdfm_df: Optional[pd.DataFrame] = None,
-    covariate_cols: List[str] = [],
 ) -> pd.DataFrame:
-    logging.info("Starting TCN forecasting pipeline...")
+    logging.info("Starting N-BEATS forecasting pipeline...")
 
-    # if gid_1 is not None:
-    #     df = df[df["GID_1"].isin(gid_1)]
+    if gid_1 is not None:
+        df = df[df["GID_1"].isin(gid_1)]
 
-    # start_date = max(pd.to_datetime(start_date), df["Date"].min())
-    # end_date = min(pd.to_datetime(end_date), df["Date"].max())
+    start_date = max(pd.to_datetime(start_date), df["Date"].min())
+    end_date = min(pd.to_datetime(end_date), df["Date"].max())
 
-    # date_range = pd.date_range(start=start_date, end=end_date, freq="ME")
-    # date_range += pd.offsets.MonthEnd(0)
-    # df.loc[:, "Date"] = pd.to_datetime(df["Date"]) + pd.offsets.MonthEnd(0)
+    date_range = pd.date_range(start=start_date, end=end_date, freq="ME")
+    date_range += pd.offsets.MonthEnd(0)
+    df.loc[:, "Date"] = pd.to_datetime(df["Date"]) + pd.offsets.MonthEnd(0)
 
-    # df = (
-    #     df.groupby(["Date", "GID_2"])
-    #     .agg(
-    #         {
-    #             "Cases": "sum",
-    #             "tmin": "mean",
-    #             "prec": "mean",
-    #         }
-    #     )
-    #     .reset_index()
-    # )
-    # multi_index = pd.MultiIndex.from_product(
-    #     [df["GID_2"].unique(), date_range], names=["GID_2", "Date"]
-    # )
-    # df = df.set_index(["GID_2", "Date"]).reindex(multi_index).reset_index()
+    df = (
+        df.groupby(["Date", "GID_2"])
+        .agg(
+            {
+                "Cases": "sum",
+                "tmin": "mean",
+                "prec": "mean",
+            }
+        )
+        .reset_index()
+    )
+    multi_index = pd.MultiIndex.from_product(
+        [df["GID_2"].unique(), date_range], names=["GID_2", "Date"]
+    )
+    df = df.set_index(["GID_2", "Date"]).reindex(multi_index).reset_index()
 
-    # # Set-up target column
-    # df["Cases"] = df["Cases"].fillna(0)
-    # df["Log_Cases"] = np.log1p(df["Cases"])
+    # Set-up target column
+    df["Cases"] = df["Cases"].fillna(0)
+    df["Log_Cases"] = np.log1p(df["Cases"])
 
-    # # Load and merge covariates (past covariates only; tcn is PastCovariates model)
-    # covariates = ["LAG_1_LOG_CASES", "LAG_1_tmin_roll_2", "LAG_1_prec_roll_2"]
-    # df["LAG_1_LOG_CASES"] = df.groupby("GID_2")["Log_Cases"].shift(1).fillna(0)
-    # df["LAG_1_tmin_roll_2"] = (
-    #     df.groupby("GID_2")["tmin"].shift(1).rolling(window=2).mean().fillna(0)
-    # )
-    # df["LAG_1_prec_roll_2"] = (
-    #     df.groupby("GID_2")["prec"].shift(1).rolling(window=2).mean().fillna(0)
-    # )
+    # Load and merge covariates (past covariates only; N-BEATS is PastCovariates model)
+    covariates = ["LAG_1_LOG_CASES", "LAG_1_tmin_roll_2", "LAG_1_prec_roll_2"]
+    df["LAG_1_LOG_CASES"] = df.groupby("GID_2")["Log_Cases"].shift(1).fillna(0)
+    df["LAG_1_tmin_roll_2"] = (
+        df.groupby("GID_2")["tmin"].shift(1).rolling(window=2).mean().fillna(0)
+    )
+    df["LAG_1_prec_roll_2"] = (
+        df.groupby("GID_2")["prec"].shift(1).rolling(window=2).mean().fillna(0)
+    )
 
     # Convert all float channels to float32
     float_cols = df.select_dtypes(include="float").columns
@@ -429,10 +423,10 @@ def tcn(
         pdfm_df = pdfm_df[~pdfm_df.index.duplicated(keep="first")]
         df = df[df["GID_2"].isin(pdfm_df.index)]
 
-    model = TCNSamples(
+    model = NbeatsSamples(
         timeseries_df=df,
         target_col="Log_Cases",
-        covariate_cols=covariate_cols,
+        covariate_cols=covariates,
         horizon=horizon,
         withheld_months=12,
         num_samples=1000,
@@ -443,5 +437,5 @@ def tcn(
     predictions = model.historical_forecasts_pooled()
     merged = df.merge(predictions, on=["Date", "GID_2"], how="left")
 
-    logging.info("TCN forecasting complete.")
+    logging.info("N-BEATS forecasting complete.")
     return merged

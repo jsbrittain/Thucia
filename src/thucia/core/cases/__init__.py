@@ -7,14 +7,21 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from .wis import wis_bracher
 
-def cases_per_month(
+
+def cases_per_month(*args, **kwargs) -> pd.DataFrame:
+    return aggregate_cases(*args, **kwargs, period="M")
+
+
+def aggregate_cases(
     df: pd.DataFrame,
     statuses: list[str] | None = None,
     fill_column: str | None = "GID_2",
+    period: str = "M",
 ) -> pd.DataFrame:
     """
-    Count how many times each exact row appears, grouped by Date floored to month-end.
+    Count how many times each exact row appears, grouped by (period) Date
 
     Parameters
     ----------
@@ -24,6 +31,11 @@ def cases_per_month(
         Subset of Status values to include.
     fill_column : str, optional
         If provided, will fill missing Dates, grouped by 'fill_column'.
+    period : str
+        Resampling period for dates. Default is 'M' (month end). Typical options:
+        - 'M': Month end
+        - 'W-SUN': Week ending Sunday (Mon-Sun) [ISO week]
+        - 'W-SAT': Week ending Saturday (Sun-Sat) [CDC epidemiological week]
 
     Returns
     -------
@@ -41,7 +53,7 @@ def cases_per_month(
         df = df[df["Status"].isin(statuses)].copy()
 
     df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"]) + pd.offsets.MonthEnd(0)
+    df["Date"] = pd.to_datetime(df["Date"]).dt.to_period(period)
 
     # Prepare columns to group by (exclude Status)
     group_cols = df.columns.tolist()
@@ -55,8 +67,11 @@ def cases_per_month(
         return grouped.sort_values(by="Date").reset_index(drop=True)
 
     # Build full date range
-    min_date, max_date = df["Date"].min(), df["Date"].max()
-    full_dates = pd.date_range(start=min_date, end=max_date, freq="ME")
+    full_periods = pd.period_range(
+        df["Date"].min(),
+        df["Date"].max(),
+        freq=df["Date"].dtype.freq,
+    )
 
     if fill_column not in group_cols:
         raise ValueError(
@@ -67,7 +82,7 @@ def cases_per_month(
 
     # Full grid of all fill_column x Date combos
     full_grid = pd.DataFrame(
-        list(product(unique_fill_values, full_dates)), columns=[fill_column, "Date"]
+        list(product(unique_fill_values, full_periods)), columns=[fill_column, "Date"]
     )
 
     # Merge grouped counts onto full grid
@@ -96,7 +111,11 @@ def cases_per_month(
     return result
 
 
-def write_nc(df: pd.DataFrame | xr.Dataset, filename: str = "cases.nc"):
+def write_nc(
+    df: pd.DataFrame | xr.Dataset,
+    filename: str = "cases.nc",
+    index_col: str | None = "Date",
+):
     """
     Write the DataFrame or xarray Dataset to a NetCDF file.
 
@@ -109,7 +128,8 @@ def write_nc(df: pd.DataFrame | xr.Dataset, filename: str = "cases.nc"):
     """
 
     if isinstance(df, pd.DataFrame):
-        df = df.set_index("Date")
+        if not index_col:
+            df = df.set_index(index_col)
         ds = df.to_xarray()
     elif isinstance(df, xr.Dataset):
         ds = df
@@ -137,7 +157,7 @@ def read_nc(filename: str | Path) -> pd.DataFrame:
     return xr.open_dataset(str(filename)).to_dataframe().reset_index()
 
 
-def r2(df, pred_col, true_col, transform=None, df_filter: dict = {}):
+def _filter_and_separate(df, pred_col, true_col, transform=None, df_filter: dict = {}):
     for key, value in df_filter.items():
         df = df[df[key] == value]
     y_true = df[true_col]
@@ -149,12 +169,40 @@ def r2(df, pred_col, true_col, transform=None, df_filter: dict = {}):
     if transform is not None:
         y_true = transform(y_true)
         y_pred = transform(y_pred)
+    return y_true, y_pred
 
+
+def r2(df, pred_col, true_col, transform=None, df_filter: dict = {}):
+    y_true, y_pred = _filter_and_separate(df, pred_col, true_col, transform, df_filter)
     ss_res = np.sum((y_true - y_pred) ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
 
     r2 = 1 - (ss_res / ss_tot)
     return r2
+
+
+def rmse(df, pred_col, true_col, transform=None, df_filter: dict = {}):
+    y_true, y_pred = _filter_and_separate(df, pred_col, true_col, transform, df_filter)
+    mse = np.mean((y_true - y_pred) ** 2)
+    return np.sqrt(mse)
+
+
+def wis(df, pred_col, true_col, transform=None, df_filter: dict = {}):
+    df = df[["GID_2", "Date", "quantile", pred_col, true_col]]
+    if transform is not None:
+        df.loc[:, true_col] = transform(df[true_col])
+        df.loc[:, pred_col] = transform(df[pred_col])
+    wis = wis_bracher(
+        df=df,
+        group_cols=("GID_2", "Date"),
+        quantile_col="quantile",
+        pred_col=pred_col,
+        obs_col=true_col,
+        log1p_scale=False,
+        clamp_negative_to_zero=True,
+        monotonic_fix=True,
+    )
+    return np.nanmean(wis["WIS"])
 
 
 def run_job(cmd: list[str], cwd: str | None = None) -> None:
@@ -165,3 +213,22 @@ def run_job(cmd: list[str], cwd: str | None = None) -> None:
     result = subprocess.run(cmd, cwd=cwd, check=True)
     if result.returncode != 0:
         raise RuntimeError(f"Command failed with return code {result.returncode}")
+
+
+def prepare_pdfm_embeddings(
+    pdfm_filename: str | None = None,
+    provinces: list[str] | None = None,
+) -> pd.DataFrame:
+    # Load PDFM embeddings
+    return read_nc(pdfm_filename)
+
+
+def prepare_embeddings(filename: str, embedding_type="pdfm") -> pd.DataFrame:
+    if embedding_type == "pdfm":
+        # Filter embeddings
+        # Dimensions:   0-127 are used to reconstruct the Aggregated Search Trends
+        #             128-255 are used to reconstruct the Maps and Busyness
+        #             256-329 are used for Weather & Air Quality
+        return prepare_pdfm_embeddings(filename)
+    else:
+        raise ValueError(f"Unknown embedding type: {embedding_type}")

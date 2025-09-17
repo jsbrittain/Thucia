@@ -10,8 +10,8 @@ import pandas as pd
 import torch
 from darts import TimeSeries
 from darts.dataprocessing.transformers import Scaler
-from darts.models import TCNModel
-from darts.utils.likelihood_models import GaussianLikelihood  # enables sampling
+from darts.models import TFTModel
+from darts.utils.likelihood_models import GaussianLikelihood  # or QuantileRegression
 
 try:
     from sklearn.decomposition import PCA
@@ -22,7 +22,7 @@ torch.set_default_dtype(torch.float32)
 torch.set_num_threads(max(1, (os.cpu_count() or 2) - 1))  # safe
 
 
-class TCNSamples:
+class TFTSamples:
     def __init__(
         self,
         timeseries_df: pd.DataFrame,
@@ -48,39 +48,41 @@ class TCNSamples:
         self.pdfm_pca_dim = pdfm_pca_dim
         self.embed_prefix = "feature"
 
-        # scalers fit on LISTS (global), not per series
+        # global scalers (fit across list of series)
         self.covar_scaler = Scaler()
         self.target_scaler = None  # optional
 
-        # --- (past-covariates) ---
-        self.model = TCNModel(
-            input_chunk_length=48,  # how many past steps the model can see
-            output_chunk_length=self.horizon,  # how many future steps the model predicts at once
-            kernel_size=3,
-            num_filters=4,
-            dropout=0.2,  # enables MC dropout
+        # ---- TFT model (torch forecasting model) ----
+        # Notes:
+        # - probabilistic by default; keep a likelihood to enable sampling
+        # - we only feed past_covariates here, matching your existing pipeline
+        self.model = TFTModel(
+            input_chunk_length=self.input_chunk_length,
+            output_chunk_length=1,
+            hidden_size=16,
+            lstm_layers=1,
+            num_attention_heads=4,
+            dropout=0.2,  # MC dropout adds stochasticity as well
+            likelihood=GaussianLikelihood(),
             random_state=42,
-            likelihood=GaussianLikelihood(),  # sampling supported
-            save_checkpoints=False,
-            force_reset=True,
             n_epochs=150,
             batch_size=64,
-            optimizer_kwargs={
-                "lr": 1e-4,
-            },
+            force_reset=True,
+            add_relative_index=True,  # gives a simple future encoder even without explicit future covs
         )
+
         self._fitted = False
         self._targets_by_gid: Dict[str, TimeSeries] = {}
         self._covars_by_gid: Dict[str, TimeSeries] = {}
 
+    # ---- single builder (the old_working version is removed per request) ----
     def _build_series_lists(
         self,
     ) -> Tuple[List[TimeSeries], List[TimeSeries], List[str]]:
         targets, covars, gids = [], [], []
-        # figure out embedding column names (from first gid that has embeddings)
         embed_cols = None
 
-        # Precompute PCA fit once here (recommended):
+        # Precompute PCA once if requested
         if (
             self.pdfm_df is not None
             and self.pdfm_pca_dim is not None
@@ -116,8 +118,8 @@ class TCNSamples:
                 freq="ME",
             ).astype(np.float32)
 
-            # ---- add embeddings as constant covariates ----
-            E = self._get_embedding_vec(gid)  # None or (D,)
+            # add constant embeddings as extra covariate channels
+            E = self._get_embedding_vec(gid)
             if E is not None:
                 if embed_cols is None:
                     D = int(E.shape[0])
@@ -135,7 +137,7 @@ class TCNSamples:
                 covars.append(cov)
                 gids.append(gid)
 
-                # store FULL series (including withheld) with embeddings, for backtest
+                # store FULL series (incl. withheld) for backtests
                 ts_full = TimeSeries.from_dataframe(
                     gdf,
                     time_col="Date",
@@ -168,18 +170,15 @@ class TCNSamples:
         if self.pdfm_df is None:
             return None
         pdfm = self.pdfm_df
-
-        # Ensure index is GID_2; if it's a column, set it
         if pdfm.index.name != "GID_2":
             if "GID_2" in pdfm.columns:
                 pdfm = pdfm.set_index("GID_2")
             else:
                 raise ValueError("pdfm_df must have an index or column named 'GID_2'.")
-
         if gid not in pdfm.index:
             raise ValueError(f"Missing embeddings for GID_2={gid}")
 
-        E = pdfm.loc[[gid]].to_numpy(dtype=np.float32)  # shape (1, D)
+        E = pdfm.loc[[gid]].to_numpy(dtype=np.float32)  # (1, D)
         if self.pdfm_pca_dim is not None:
             if PCA is None:
                 raise ImportError("scikit-learn is required for pdfm_pca_dim.")
@@ -189,30 +188,28 @@ class TCNSamples:
                     allE
                 )
                 self._pca_fitted = True
-            E = self._pca.transform(E).astype(np.float32)  # (1, D_pca)
-        return E.squeeze(0)  # (D,)
+            E = self._pca.transform(E).astype(np.float32)
+        return E.squeeze(0)
 
     def fit_global(self):
-        # build lists
         target_list, covar_list, gids = self._build_series_lists()
         if not target_list:
             raise ValueError("No series have enough length to train.")
 
-        # (optional) scale target as well
+        # Optionally scale target
         # self.target_scaler = Scaler()
         # target_list = self.target_scaler.fit_transform(target_list)
 
-        # scale covariates globally (fit on list)
+        # global fit of covariate scaler (recommended for pooled training)
         covar_list = self.covar_scaler.fit_transform(covar_list)
 
-        # train once, globally
         self.model.fit(
             series=target_list,
             past_covariates=covar_list,
             verbose=self.verbose,
         )
 
-        # Transform ALL full covariates now (avoid per-province warning later)
+        # transform all stored FULL covariates once
         cov_full_list = [self._covars_by_gid[g] for g in gids]
         cov_full_list = self.covar_scaler.transform(cov_full_list)
         self._covars_by_gid = {g: cov for g, cov in zip(gids, cov_full_list)}
@@ -229,21 +226,20 @@ class TCNSamples:
 
             bt = self.model.historical_forecasts(
                 series=ts,
-                past_covariates=cov,  # already scaled elsewhere
+                past_covariates=cov,  # already scaled
                 forecast_horizon=self.horizon,
                 stride=1,
                 retrain=False,
                 last_points_only=True,
                 verbose=False,
-                num_samples=self.num_samples,  # uses GaussianLikelihood sampling
+                num_samples=self.num_samples,  # sampling thanks to likelihood
             )
 
-            # convert to long samples DF
-            vals = TimeSeries.all_values(bt)  # shape: (T_bt, 1, n_samples)
+            vals = TimeSeries.all_values(bt)  # (T_bt, 1, S)
             T_bt, _, S = vals.shape
             vals = vals.reshape(T_bt, S)
-
             dates = bt.time_index
+
             out = pd.DataFrame(vals)
             out["Date"] = dates
             out = out.melt(id_vars="Date", var_name="sample", value_name="prediction")
@@ -255,7 +251,6 @@ class TCNSamples:
             pred_df["prediction"] = np.clip(
                 np.expm1(pred_df["prediction"]), a_min=0, a_max=None
             )
-
         return pred_df
 
     def final_forecasts(self) -> pd.DataFrame:
@@ -265,8 +260,7 @@ class TCNSamples:
 
         rows = []
         for gid, ts in self._targets_by_gid.items():
-            cov = self._covars_by_gid[gid]  # already scaled in fit_global()
-
+            cov = self._covars_by_gid[gid]
             fut = self.model.predict(
                 n=self.horizon,
                 series=ts,
@@ -275,8 +269,7 @@ class TCNSamples:
                 verbose=False,
             )
             vals = TimeSeries.all_values(fut)  # (H, 1, S)
-            last_vals = vals[-1, 0, :]  # (S,)
-
+            last_vals = vals[-1, 0, :]
             last_date = fut.time_index[-1]
             out = pd.DataFrame(
                 {
@@ -300,13 +293,10 @@ def extract_oos_for_adapter_from_model(
     train_only: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Build OOS residual training tables from a fitted pooled model (your TCNSamples instance).
+    Build OOS residual training tables from a fitted pooled model (TFTSamples).
     Returns:
         pred_train_df: Date, GID_2, y_pred  (same scale as model_obj.target_col)
         y_df:          Date, GID_2, y_true  (same scale as model_obj.target_col)
-    Notes:
-      - Uses retrain=False rolling forecasts => OOS w.r.t. each cutoff.
-      - If you log-transformed target, this is still on LOG scale (good; keep consistent).
     """
     if not getattr(model_obj, "_fitted", False):
         model_obj.fit_global()
@@ -314,25 +304,21 @@ def extract_oos_for_adapter_from_model(
     rows_pred, rows_true = [], []
 
     for gid, ts in model_obj._targets_by_gid.items():
-        cov = model_obj._covars_by_gid[gid]  # already scaled in your code
+        cov = model_obj._covars_by_gid[gid]
         bt = model_obj.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
             forecast_horizon=horizon,
             stride=1,
             retrain=False,
-            last_points_only=True,  # only H-step ahead points
+            last_points_only=True,
             verbose=False,
-            num_samples=1,  # mean prediction for residual fitting
+            num_samples=1,  # mean pred for residual fitting
         )
-        # Align truth at the same forecast dates (bt.time_index are t+H timestamps)
-        truth = ts.slice_intersect(bt)
 
-        # To numpy
-        yhat = bt.all_values().squeeze(axis=1).squeeze(axis=-1)  # (T_bt,)
-        yhat = yhat.squeeze()
-        ytru = truth.all_values().squeeze(axis=1)  # (T_bt,)
-        ytru = ytru.squeeze()
+        truth = ts.slice_intersect(bt)
+        yhat = bt.all_values().squeeze(axis=1).squeeze(axis=-1)
+        ytru = truth.all_values().squeeze(axis=1)
         dates = bt.time_index
 
         if train_only and model_obj.withheld_months > 0:
@@ -364,62 +350,61 @@ def extract_oos_for_adapter_from_model(
     return pred_train_df, y_df
 
 
-def tcn(
+def tft(
     df: pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: list[str] | None = None,
     horizon: int = 1,
     pdfm_df: Optional[pd.DataFrame] = None,
-    covariate_cols: List[str] = [],
 ) -> pd.DataFrame:
-    logging.info("Starting TCN forecasting pipeline...")
+    logging.info("Starting TFT forecasting pipeline...")
 
-    # if gid_1 is not None:
-    #     df = df[df["GID_1"].isin(gid_1)]
+    if gid_1 is not None:
+        df = df[df["GID_1"].isin(gid_1)]
 
-    # start_date = max(pd.to_datetime(start_date), df["Date"].min())
-    # end_date = min(pd.to_datetime(end_date), df["Date"].max())
+    start_date = max(pd.to_datetime(start_date), df["Date"].min())
+    end_date = min(pd.to_datetime(end_date), df["Date"].max())
 
-    # date_range = pd.date_range(start=start_date, end=end_date, freq="ME")
-    # date_range += pd.offsets.MonthEnd(0)
-    # df.loc[:, "Date"] = pd.to_datetime(df["Date"]) + pd.offsets.MonthEnd(0)
+    date_range = pd.date_range(start=start_date, end=end_date, freq="ME")
+    date_range += pd.offsets.MonthEnd(0)
+    df.loc[:, "Date"] = pd.to_datetime(df["Date"]) + pd.offsets.MonthEnd(0)
 
-    # df = (
-    #     df.groupby(["Date", "GID_2"])
-    #     .agg(
-    #         {
-    #             "Cases": "sum",
-    #             "tmin": "mean",
-    #             "prec": "mean",
-    #         }
-    #     )
-    #     .reset_index()
-    # )
-    # multi_index = pd.MultiIndex.from_product(
-    #     [df["GID_2"].unique(), date_range], names=["GID_2", "Date"]
-    # )
-    # df = df.set_index(["GID_2", "Date"]).reindex(multi_index).reset_index()
+    df = (
+        df.groupby(["Date", "GID_2"])
+        .agg(
+            {
+                "Cases": "sum",
+                "tmin": "mean",
+                "prec": "mean",
+            }
+        )
+        .reset_index()
+    )
+    multi_index = pd.MultiIndex.from_product(
+        [df["GID_2"].unique(), date_range], names=["GID_2", "Date"]
+    )
+    df = df.set_index(["GID_2", "Date"]).reindex(multi_index).reset_index()
 
-    # # Set-up target column
-    # df["Cases"] = df["Cases"].fillna(0)
-    # df["Log_Cases"] = np.log1p(df["Cases"])
+    # target
+    df["Cases"] = df["Cases"].fillna(0)
+    df["Log_Cases"] = np.log1p(df["Cases"])
 
-    # # Load and merge covariates (past covariates only; tcn is PastCovariates model)
-    # covariates = ["LAG_1_LOG_CASES", "LAG_1_tmin_roll_2", "LAG_1_prec_roll_2"]
-    # df["LAG_1_LOG_CASES"] = df.groupby("GID_2")["Log_Cases"].shift(1).fillna(0)
-    # df["LAG_1_tmin_roll_2"] = (
-    #     df.groupby("GID_2")["tmin"].shift(1).rolling(window=2).mean().fillna(0)
-    # )
-    # df["LAG_1_prec_roll_2"] = (
-    #     df.groupby("GID_2")["prec"].shift(1).rolling(window=2).mean().fillna(0)
-    # )
+    # past covariates (TFT also supports future_covariates; we keep past-only here)
+    covariates = ["LAG_1_LOG_CASES", "LAG_1_tmin_roll_2", "LAG_1_prec_roll_2"]
+    df["LAG_1_LOG_CASES"] = df.groupby("GID_2")["Log_Cases"].shift(1).fillna(0)
+    df["LAG_1_tmin_roll_2"] = (
+        df.groupby("GID_2")["tmin"].shift(1).rolling(window=2).mean().fillna(0)
+    )
+    df["LAG_1_prec_roll_2"] = (
+        df.groupby("GID_2")["prec"].shift(1).rolling(window=2).mean().fillna(0)
+    )
 
-    # Convert all float channels to float32
+    # float32
     float_cols = df.select_dtypes(include="float").columns
     df[float_cols] = df[float_cols].astype(np.float32)
 
-    # Prepare embeddings
+    # optional embeddings (constant features)
     if pdfm_df is not None:
         provinces = df["GID_2"].unique()
         pdfm_df = pdfm_df[pdfm_df["GID_2"].isin(provinces)].copy()
@@ -429,19 +414,19 @@ def tcn(
         pdfm_df = pdfm_df[~pdfm_df.index.duplicated(keep="first")]
         df = df[df["GID_2"].isin(pdfm_df.index)]
 
-    model = TCNSamples(
+    tft_obj = TFTSamples(
         timeseries_df=df,
         target_col="Log_Cases",
-        covariate_cols=covariate_cols,
+        covariate_cols=covariates,
         horizon=horizon,
         withheld_months=12,
         num_samples=1000,
-        pdfm_df=pdfm_df,  # includes embeddings as covariates
+        pdfm_df=pdfm_df,  # embeddings appended as channels in past_covariates
         # pdfm_pca_dim=5,
     )
 
-    predictions = model.historical_forecasts_pooled()
+    predictions = tft_obj.historical_forecasts_pooled()
     merged = df.merge(predictions, on=["Date", "GID_2"], how="left")
 
-    logging.info("TCN forecasting complete.")
+    logging.info("TFT forecasting complete.")
     return merged
