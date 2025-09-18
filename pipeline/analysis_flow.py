@@ -1,11 +1,12 @@
 import logging
+import random
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
 from thucia.core import models
 from thucia.core.cases import cases_per_month
-from thucia.core.cases import prepare_embeddings
 from thucia.core.cases import r2
 from thucia.core.cases import read_nc
 from thucia.core.cases import rmse
@@ -19,10 +20,19 @@ from thucia.core.geo import pad_admin2
 from thucia.core.logging import enable_logging
 from thucia.core.models import run_model
 from thucia.core.models.ensemble import create_ensemble
-from thucia.core.models.utils import residual_regression
+from thucia.core.models.utils import sanitise_covariates
 from thucia.viz import plot_ensemble_weights_over_time
+# from thucia.core.cases import prepare_embeddings
+# import os
+# from thucia.core.models.utils import residual_regression
 # from prefect.futures import wait
 # from thucia.core.wrappers import flow
+
+seed = 42
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+# torch.set_float32_matmul_precision('medium')
 
 
 enable_logging(level=logging.DEBUG)
@@ -33,8 +43,8 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
     path = (Path("data") / "cases" / iso3).resolve()
     df = read_nc(path / "cases.nc")
 
-    pdfm_filename = path / "embeddings.nc"
-    pdfm_df = prepare_embeddings(pdfm_filename) if pdfm_filename.exists() else None
+    # pdfm_filename = path / "embeddings.nc"
+    # pdfm_df = prepare_embeddings(pdfm_filename) if pdfm_filename.exists() else None
 
     if False:
         # Aggregate cases per month
@@ -94,24 +104,26 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
     df = read_nc(path / "cases_with_climate.nc")
 
     if True:
-        horizon = 1
-        model = models.tcn
+        horizon = 12  # ##############################
+        model = models.xgboost
+        start_date = pd.to_datetime("2015-01-01")
 
         from thucia.core.models.utils import (
             filter_admin1,
             interpolate_missing_dates,
             set_historical_na_to_zero,
         )
-        from thucia.core.models.utils.covariates import prepare_covariates
+        # from thucia.core.models.utils.covariates import prepare_covariates
 
         gid_1 = lookup_gid1(iso3=iso3, admin1_names=adm1)
         df = filter_admin1(df, gid_1)
+        # df=df[df['GID_2']=='PER.14.1_1']  # #############################
         df = interpolate_missing_dates(df)
         df = set_historical_na_to_zero(df)
         # df, case_col, covariate_cols = prepare_covariates(df)
 
         # Load and merge covariates (past covariates only; tcn is PastCovariates model)
-        if False:
+        if True:
             df["Log_Cases"] = np.log1p(df["Cases"])
             case_col = "Log_Cases"
 
@@ -136,58 +148,28 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
                 .fillna(0)
             )
 
-        if True:
-            # df["Cases"] = df["Cases"].fillna(0)  # # #############################
+        if False:
             df["Log_Cases"] = np.log1p(df["Cases"])
             case_col = "Log_Cases"
 
             # tmin, lags 0-4
             df["tmax_lag_0"] = df.groupby("GID_2")["tmax"].shift(0)
-            df["tmax_lag_1"] = df.groupby("GID_2")["tmax"].shift(1)
-            df["tmax_lag_2"] = df.groupby("GID_2")["tmax"].shift(2)
-            df["tmax_lag_3"] = df.groupby("GID_2")["tmax"].shift(3)
-            df["tmax_lag_4"] = df.groupby("GID_2")["tmax"].shift(4)
 
             # tmax, lags 0-4
             df["tmin_lag_0"] = df.groupby("GID_2")["tmin"].shift(0)
-            df["tmin_lag_1"] = df.groupby("GID_2")["tmin"].shift(1)
-            df["tmin_lag_2"] = df.groupby("GID_2")["tmin"].shift(2)
-            df["tmin_lag_3"] = df.groupby("GID_2")["tmin"].shift(3)
-            df["tmin_lag_4"] = df.groupby("GID_2")["tmin"].shift(4)
 
             # precip, lags 0-6
             df["prec_lag_0"] = df.groupby("GID_2")["prec"].shift(0)
-            df["prec_lag_1"] = df.groupby("GID_2")["prec"].shift(1)
-            df["prec_lag_2"] = df.groupby("GID_2")["prec"].shift(2)
-            df["prec_lag_3"] = df.groupby("GID_2")["prec"].shift(3)
-            df["prec_lag_4"] = df.groupby("GID_2")["prec"].shift(4)
-            df["prec_lag_5"] = df.groupby("GID_2")["prec"].shift(5)
-            df["prec_lag_6"] = df.groupby("GID_2")["prec"].shift(6)
 
             # SPI-6, lags 0-6 (check availability)
             df["spi6_lag_0"] = df.groupby("GID_2")["SPI6"].shift(0)
-            df["spi6_lag_1"] = df.groupby("GID_2")["SPI6"].shift(1)
-            df["spi6_lag_2"] = df.groupby("GID_2")["SPI6"].shift(2)
-            df["spi6_lag_3"] = df.groupby("GID_2")["SPI6"].shift(3)
-            df["spi6_lag_4"] = df.groupby("GID_2")["SPI6"].shift(4)
-            df["spi6_lag_5"] = df.groupby("GID_2")["SPI6"].shift(5)
-            df["spi6_lag_6"] = df.groupby("GID_2")["SPI6"].shift(6)
 
             # ONI, lags 0-6 (check availability)
             df["oni_lag_0"] = df.groupby("GID_2")["TotalONI"].shift(0)
-            df["oni_lag_1"] = df.groupby("GID_2")["TotalONI"].shift(1)
-            df["oni_lag_2"] = df.groupby("GID_2")["TotalONI"].shift(2)
-            df["oni_lag_3"] = df.groupby("GID_2")["TotalONI"].shift(3)
-            df["oni_lag_4"] = df.groupby("GID_2")["TotalONI"].shift(4)
-            df["oni_lag_5"] = df.groupby("GID_2")["TotalONI"].shift(5)
-            df["oni_lag_6"] = df.groupby("GID_2")["TotalONI"].shift(6)
 
             # ONI 6-month avg, lags 0-1 (i.e. past 6 months and past 7-12 months)
             df["oni_6m_lag_0"] = (
                 df.groupby("GID_2")["TotalONI"].shift(0).rolling(window=6).mean()
-            )
-            df["oni_6m_lag_1"] = (
-                df.groupby("GID_2")["TotalONI"].shift(6).rolling(window=6).mean()
             )
 
             # ONI 12-month avg, lag 0
@@ -200,40 +182,21 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
 
             # (log) case count, lags 1-2 (only required for iterative models)
             df["log_cases_lag_1"] = df.groupby("GID_2")["Log_Cases"].shift(1)
-            df["log_cases_lag_2"] = df.groupby("GID_2")["Log_Cases"].shift(2)
 
             covariate_cols = [
-                "tmax_lag_0",  # 'tmax_lag_1', 'tmax_lag_2', 'tmax_lag_3', 'tmax_lag_4',
-                "tmin_lag_0",  # 'tmin_lag_1', 'tmin_lag_2', 'tmin_lag_3', 'tmin_lag_4',
-                "prec_lag_0",  # 'prec_lag_1', 'prec_lag_2', 'prec_lag_3', 'prec_lag_4', 'prec_lag_5', 'prec_lag_6',
-                "spi6_lag_0",  # 'spi6_lag_1', 'spi6_lag_2', 'spi6_lag_3', 'spi6_lag_4', 'spi6_lag_5', 'spi6_lag_6',
-                "oni_lag_0",  # 'oni_lag_1', 'oni_lag_2', 'oni_lag_3', 'oni_lag_4', 'oni_lag_5', 'oni_lag_6',
-                "oni_6m_lag_0",  # 'oni_6m_lag_1',
+                "tmax_lag_0",
+                "tmin_lag_0",
+                "prec_lag_0",
+                "spi6_lag_0",
+                "oni_lag_0",
+                "oni_6m_lag_0",
                 "oni_12m_lag_0",
                 "pop_lag_0",
-                "log_cases_lag_1",  # 'log_cases_lag_2',
+                "log_cases_lag_1",
             ]
 
         df = df[["Date", "GID_2", "future", "Cases", case_col] + covariate_cols]
-
-        for c in covariate_cols:
-            df[c] = df[c].fillna(0)
-        #     df[c] = (df[c] - df[c].mean())/df[c].std()
-
-        # Transform covariates by PCA and select top 10 components
-        if False:
-            keep_components = 8
-            from sklearn.decomposition import PCA
-
-            df_covs = df[["Date", "GID_2"] + covariate_cols].copy()
-            logging.info("Fit PCA")
-            pca = PCA(n_components=min(keep_components, len(covariate_cols)))
-            logging.info("Transform covariates by PCA")
-            covs_transformed = pca.fit_transform(df_covs[covariate_cols])
-            df = df.drop(columns=covariate_cols)
-            covariate_cols = [f"PC{i + 1}" for i in range(covs_transformed.shape[1])]
-            df[covariate_cols] = covs_transformed
-            df = df[["Date", "GID_2", "future", "Cases", case_col] + covariate_cols]
+        df = sanitise_covariates(df, covariate_cols, start_date)
 
         name = f"{model.__name__}_h{horizon}"
         logging.info("Running model: %s", name)
@@ -243,8 +206,7 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
             df=df,
             path=path,
             # Model parameters
-            start_date="2015-01-01",
-            # end_date=None,
+            start_date=start_date,
             gid_1=gid_1,
             horizon=horizon,
             # case_col=case_col,
@@ -265,6 +227,7 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
         logging.info("Reporting statistics for all models")
         # model_list = ["baseline", "inla", "sarima", "tcn", "timesfm", "ensemble"]
         model_list = [name]
+        # model_list = ["tcn_h12"]
         for model in model_list:
             df_model = read_nc(str(path / f"{model}_cases_quantiles.nc"))
             r2_model = r2(

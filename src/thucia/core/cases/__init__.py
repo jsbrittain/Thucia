@@ -172,13 +172,29 @@ def _filter_and_separate(df, pred_col, true_col, transform=None, df_filter: dict
     return y_true, y_pred
 
 
-def r2(df, pred_col, true_col, transform=None, df_filter: dict = {}):
+def r2(df, pred_col, true_col, transform=None, df_filter: dict = {}, horizon: int = 1):
+    if "horizon" in df.columns and horizon is not None and df["horizon"].nunique() > 1:
+        r2s = [
+            r2(
+                df[df["horizon"] == h],
+                pred_col,
+                true_col,
+                transform,
+                df_filter,
+                horizon=None,
+            )
+            for h in df["horizon"].unique()
+        ]
+        print(r2s)
+        return r2s
+    if "quantile" in df.columns:
+        df = df[df["quantile"] == 0.5]
     y_true, y_pred = _filter_and_separate(df, pred_col, true_col, transform, df_filter)
     ss_res = np.sum((y_true - y_pred) ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
 
-    r2 = 1 - (ss_res / ss_tot)
-    return r2
+    r2x = 1 - (ss_res / ss_tot)
+    return r2x
 
 
 def rmse(df, pred_col, true_col, transform=None, df_filter: dict = {}):

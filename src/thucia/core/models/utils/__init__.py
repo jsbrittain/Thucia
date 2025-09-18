@@ -1,7 +1,9 @@
 import logging
+from typing import Optional
 
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
 
 from .adapter import residual_regression as residual_regression
 
@@ -150,4 +152,39 @@ def set_historical_na_to_zero(
     """
     df = df.copy()
     set_nan_zero(df, col=col, filter_col=filter_col)
+    return df
+
+
+def pca_transform(
+    df, covariate_cols, keep_components: Optional[int] = 5, case_col="Cases"
+):
+    # PCA transform covariates and project to fewer dimensions
+    df_covs = df[["Date", "GID_2"] + covariate_cols].copy()
+    logging.info("Fit PCA")
+    pca = PCA(n_components=min(keep_components, len(covariate_cols)))
+    logging.info("Transform covariates by PCA")
+    covs_transformed = pca.fit_transform(df_covs[covariate_cols])
+    df = df.drop(columns=covariate_cols)
+    covariate_cols = [f"PC{i + 1}" for i in range(covs_transformed.shape[1])]
+    df[covariate_cols] = covs_transformed
+    df = df[["Date", "GID_2", "future", "Cases", case_col] + covariate_cols]
+    return df
+
+
+def sanitise_covariates(df, covariate_cols, start_date):
+    # Covariate sanitisation
+    for c in covariate_cols:
+        # NaN replacement: seasonal mean, forward and back fill
+        df[c] = df.groupby(["GID_2", df["Date"].dt.month])[c].transform(
+            lambda s: s.fillna(s.mean())
+        )
+        df[c] = df.groupby("GID_2")[c].ffill().bfill()
+        # Standardise using pre- start date values
+        mask = df["Date"] < start_date
+        mu = df[mask][c].mean()
+        sd = np.max([1e-8, df[mask][c].std()])
+        df[c] = (df[c] - mu) / sd
+        # Sanity check
+        if df[c].isna().any():
+            raise Exception("NaN found in covariates")
     return df

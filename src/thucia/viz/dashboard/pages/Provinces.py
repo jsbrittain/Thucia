@@ -39,6 +39,13 @@ data_filename = st.sidebar.selectbox(
 )
 casedata_filename = str(data_folder / data_filename)
 
+horizon = st.select_slider(
+    "Horizon:",
+    options=list(range(1, 13)),
+    value=1,
+)
+show_interval = st.checkbox("Show Prediction Interval (90%)", value=True)
+
 # --- Load Real Model Data
 with st.spinner("Loading datasets..."):
     filename = casedata_filename
@@ -48,7 +55,7 @@ with st.spinner("Loading datasets..."):
 
     if "horizon" in df.columns:
         # If horizons are present, we take the 1-step ahead prediction
-        df = df[df["horizon"] == 1]
+        df = df[df["horizon"] == horizon]
         df = df.drop(columns=["horizon"])
 
 if "quantile" not in df.columns:
@@ -62,7 +69,6 @@ def overlay_plot(data, color, **kwargs):
     # Sort data by target_end_date
     data = data.sort_values("Date")
 
-    show_interval = False
     if show_interval:
         ax.fill_between(
             data[data["quantile"] == 0.5]["Date"].values,
