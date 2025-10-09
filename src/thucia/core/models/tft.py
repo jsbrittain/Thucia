@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from darts.models import TFTModel
-from darts.utils.likelihood_models import QuantileRegression
+from darts.utils.likelihood_models import GaussianLikelihood
 
 from .darts import DartsBase
 
@@ -24,7 +24,7 @@ class TftSamples(DartsBase):
             lstm_layers=1,
             num_attention_heads=4,
             dropout=0.2,  # MC dropout adds stochasticity as well
-            likelihood=QuantileRegression(),
+            likelihood=GaussianLikelihood(),
             random_state=42,
             n_epochs=150,  # default 100
             batch_size=64,
@@ -67,6 +67,7 @@ def tft(
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
+    retrain: bool = True,  # Only use False for a quick test
 ) -> pd.DataFrame:
     logging.info("Starting TFT forecasting pipeline...")
 
@@ -86,7 +87,7 @@ def tft(
     # Historical predictions
     preds_hist = model.historical_predictions(
         start_date=start_date,
-        retrain=True,  # Only use False for a quick test
+        retrain=retrain,
     )
     preds = preds_hist
 

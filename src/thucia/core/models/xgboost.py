@@ -68,6 +68,7 @@ def xgboost(
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
+    retrain: bool = True,  # Only use False for a quick test
 ) -> pd.DataFrame:
     logging.info("Starting XGBoost forecasting pipeline...")
 
@@ -87,7 +88,7 @@ def xgboost(
     # Historical predictions
     preds_hist = model.historical_predictions(
         start_date=start_date,
-        retrain=True,  # Only use False for a quick test
+        retrain=retrain,
     )
     preds = preds_hist
 

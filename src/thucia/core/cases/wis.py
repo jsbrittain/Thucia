@@ -54,7 +54,7 @@ def _bracher_wis_from_quantiles(y, q_levels, q_preds):
         q_comp = 1.0 - q
         if q_comp not in q_levels:
             continue
-        l = q_preds[q_levels.tolist().index(q)]
+        l = q_preds[q_levels.tolist().index(q)]  # noqa: E741
         u = q_preds[q_levels.tolist().index(q_comp)]
         alpha = 2.0 * q
         # interval score IS_alpha
@@ -126,14 +126,3 @@ def wis_bracher(
         out_rows.append(row)
 
     return pd.DataFrame(out_rows)
-
-
-# ---- examples ----
-# 1) per (GID_2, Date)
-# wis_df = compute_wis_bracher(df, group_cols=("GID_2","Date"), log1p_scale=True)
-
-# 2) per (GID_2, Date, model) if you have a 'model' column
-# wis_df = compute_wis_bracher(df, group_cols=("GID_2","Date","model"), log1p_scale=True)
-
-# 3) summarise like scoringutils::summarise_scores
-# wis_summary = wis_df.groupby("model", as_index=False)["WIS"].mean().rename(columns={"WIS":"mean_WIS"})

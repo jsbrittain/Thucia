@@ -9,6 +9,8 @@ def movavg(
     end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: list[str] | None = None,
     method: str = "historical",  # historical / predict
+    *args,
+    **kwargs,
 ) -> pd.DataFrame:
     logging.info("Starting Seasonal Moving Average model...")
 

@@ -69,6 +69,7 @@ def tcn(
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
+    retrain: bool = True,  # Only use False for a quick test
 ) -> pd.DataFrame:
     logging.info("Starting TCN forecasting pipeline...")
 
@@ -76,20 +77,36 @@ def tcn(
     float_cols = df.select_dtypes(include="float").columns
     df[float_cols] = df[float_cols].astype(np.float32)
 
-    model = TcnSamples(
-        df=df,
-        case_col=case_col,
-        covariate_cols=covariate_cols,
-        horizon=horizon,
-        num_samples=1000,
-        start_date=start_date,
-    )
+    preds_hist = []
+    gid_list = df["GID_2"].unique().tolist()
+    for ix, gid in enumerate(gid_list):
+        logging.info(f"Processing GID_2: {gid}...")
+        tic = pd.Timestamp.now()
 
-    # Historical predictions
-    preds_hist = model.historical_predictions(
-        start_date=start_date,
-        retrain=True,  # Only use False for a quick test
-    )
-    preds = preds_hist
+        df_gid = df[df["GID_2"] == gid].copy()
 
+        model = TcnSamples(
+            df=df_gid,
+            case_col=case_col,
+            covariate_cols=covariate_cols,
+            horizon=horizon,
+            num_samples=1000,
+            start_date=start_date,
+        )
+
+        # Historical predictions
+        preds_hist.append(
+            model.historical_predictions(
+                start_date=start_date,
+                retrain=retrain,
+            )
+        )
+
+        toc = pd.Timestamp.now()
+        logging.info(f"Completed GID_2: {gid} in {toc - tic}.")
+
+        estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
+        logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
+
+    preds = pd.concat(preds_hist).reset_index(drop=True)
     return preds

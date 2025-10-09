@@ -115,6 +115,8 @@ class DartsBase:
 
         rows = []
         for ts, cov, gid in zip(target_list, covar_list, target_gids):
+            logging.info(f"Forecasting for GID_2 {gid}")
+            tic = pd.Timestamp.now()
             bt = self.historical_forecasts(
                 ts, cov, start_date=start_date, retrain=retrain
             )
@@ -135,27 +137,36 @@ class DartsBase:
                 out["sample"] = out["sample"].astype(int)
                 out["GID_2"] = gid
 
-                # samples to quantiles
-                out = (
-                    pd.concat(
-                        {
-                            k: sample_to_quantiles_vec(
-                                np.expm1(g["prediction"]).clip(
-                                    lower=0
-                                ),  # transform before quantiles
-                                self.quantiles,
-                            )
-                            for k, g in out.groupby(["Date", "GID_2"])
-                        },
-                        names=["Date", "GID_2"],
+                if len(out) > 1:
+                    # samples to quantiles
+                    out = (
+                        pd.concat(
+                            {
+                                k: sample_to_quantiles_vec(
+                                    np.expm1(g["prediction"]).clip(
+                                        lower=0
+                                    ),  # transform before quantiles
+                                    self.quantiles,
+                                )
+                                for k, g in out.groupby(["Date", "GID_2"])
+                            },
+                            names=["Date", "GID_2"],
+                        )
+                        .reset_index()
+                        .rename(columns={"value": "prediction"})
+                        .drop(columns=["level_2"])
                     )
-                    .reset_index()
-                    .rename(columns={"value": "prediction"})
-                    .drop(columns=["level_2"])
-                )
-                out["horizon"] = h + 1  # 1-based horizon
+                    out["horizon"] = h + 1  # 1-based horizon
+                else:
+                    out["quantile"] = 0.5
+                    out["horizon"] = h + 1  # 1-based horizon
+                    out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
+                    out = out.drop(columns=["sample"])
 
                 rows.append(out)
+
+            toc = pd.Timestamp.now()
+            logging.info(f"Region {gid} done in {toc - tic}")
 
         preds = pd.concat(rows, ignore_index=True)
 

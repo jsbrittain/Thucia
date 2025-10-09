@@ -1,7 +1,6 @@
 import logging
 from dataclasses import dataclass
 from typing import List
-from typing import Literal
 from typing import Optional
 from typing import Tuple
 
@@ -40,22 +39,12 @@ def _prepare_fit_table(
     cutoff_date: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
     date_col, gid_col, yhat_col = use_cols
-    # need_cols_pred = {date_col, gid_col, yhat_col}
-    # need_cols_y = {date_col, gid_col, y_col}
-    # if not need_cols_pred.issubset(pred_train_df.columns):
-    #     raise ValueError(f"pred_train_df must have columns {need_cols_pred}")
-    # if not need_cols_y.issubset(y_df.columns):
-    #     raise ValueError(f"y_df must have columns {need_cols_y}")
-
-    # dfm = pred_train_df[[date_col, gid_col, yhat_col]].merge(
-    #     y_df[[date_col, gid_col, y_col]], on=[date_col, gid_col], how="inner"
-    # )
-    # if train_mask is not None:
-    #     dfm = dfm[train_mask.values]
-    # if cutoff_date is not None:
-    #     dfm = dfm[dfm[date_col] <= pd.to_datetime(cutoff_date)]
-    # if dfm.empty:
-    #     raise ValueError("No rows available to fit adapter after masking/cutoff.")
+    if train_mask is not None:
+        dfm = dfm[train_mask.values]
+    if cutoff_date is not None:
+        dfm = dfm[dfm[date_col] <= pd.to_datetime(cutoff_date)]
+    if dfm.empty:
+        raise ValueError("No rows available to fit adapter after masking/cutoff.")
     dfm["residual"] = dfm[y_col].astype(np.float32) - dfm[yhat_col].astype(np.float32)
     return dfm
 
@@ -130,11 +119,11 @@ class AdapterBase:
         y_std = y_std[~np.isnan(y_std)]
 
         # quick train fit score (in-sample)
-        pred_train = self._predict_impl(X_fit)
-        r2 = 1.0 - np.sum((y_std - pred_train) ** 2) / np.sum(
-            (y_std - y_std.mean()) ** 2
-        )
-        logging.info("[Adapter] In-sample R^2 on residuals: %.3f", r2)
+        # pred_train = self._predict_impl(X_fit)
+        # r2 = 1.0 - np.sum((y_std - pred_train) ** 2) / np.sum(
+        #     (y_std - y_std.mean()) ** 2
+        # )
+        # logging.info("[Adapter] In-sample R^2 on residuals: %.3f", r2)
 
     def bias_for_gid(self, gid: str) -> float:
         if not self._fitted or self._space is None:
@@ -302,16 +291,68 @@ def residual_regression(df_model, df_predictors, method):
         raise Exception(f"Unrecognised method requested: {method}")
 
     log_transform = True
+    df_work = df_model.copy()
     if log_transform:
-        df_model["Cases"] = np.log1p(df_model["Cases"])
-        df_model["prediction"] = np.log1p(df_model["prediction"])
+        df_work["Cases"] = np.log1p(df_work["Cases"])
+        df_work["prediction"] = np.log1p(df_work["prediction"])
 
-    adapter.fit(df=df_model, transform=None)  # np.log1p)
-    pred_df_corrected = adapter.apply(df_model, out_col="prediction")
-    df_model.loc[:, "prediction"] = pred_df_corrected["prediction"]
+    # Ensure a horizon column exists (kept from original behavior)
+    if "horizon" not in df_work.columns:
+        df_work["horizon"] = 1
+    if "quantile" not in df_work.columns:
+        df_work["quantile"] = 0.5
+
+    collated = []
+    for horizon in df_work["horizon"].unique():
+        logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
+        dfh_allq = df_work[df_work["horizon"] == horizon]
+        for q in sorted(dfh_allq["quantile"].unique()):
+            dfh = dfh_allq[dfh_allq["quantile"] == q].copy()
+            # Expanding window per date (strictly causal)
+            out_slices = []
+            # Convert once to Timestamps for robust comparisons
+            dates = pd.to_datetime(dfh["Date"])
+            unique_dates = np.sort(dates.unique())
+
+            for d in unique_dates:
+                mask_fit = dates < d
+                mask_apply = dates == d
+
+                df_fit = dfh.loc[mask_fit].copy()
+                df_apply = dfh.loc[mask_apply].copy()
+
+                if df_fit.empty:
+                    # Nothing to fit yet; keep predictions as-is for the first date
+                    out_slices.append(df_apply)
+                    continue
+
+                try:
+                    adapter.fit(df=df_fit, transform=None)
+                except ValueError as e:
+                    logging.warning(f"Adapter failed to fit at date {d}: {e}")
+                    out_slices.append(df_apply)
+                    continue
+
+                pred_df_corrected = adapter.apply(df_apply, out_col="prediction")
+                df_apply.loc[:, "prediction"] = pred_df_corrected["prediction"]
+                out_slices.append(df_apply)
+
+            if out_slices:
+                df_out = pd.concat(out_slices, axis=0)
+                collated.append(df_out)
+
+    df_out_all = pd.concat(collated, axis=0)
 
     if log_transform:
-        df_model["Cases"] = np.expm1(df_model["Cases"])
-        df_model["prediction"] = np.expm1(df_model["prediction"])
+        df_out_all["Cases"] = np.expm1(df_out_all["Cases"])
+        df_out_all["prediction"] = np.expm1(df_out_all["prediction"])
 
-    return df_model
+    # Return in the original row order
+    # df_out_all = df_out_all.loc[df_model.index]
+
+    # Sort
+    df_out_all = df_out_all.sort_values(
+        by=["Date", "GID_2", "horizon", "quantile"]
+    ).reset_index(drop=True)
+
+    return df_out_all

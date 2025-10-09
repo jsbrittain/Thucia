@@ -9,10 +9,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from thucia.core.cases import write_nc
-from thucia.core.geo import convert_to_incidence_rate
+from thucia.core.geo import convert_to_incidence_rate  # noqa: F401
 
+from .utils import filter_admin1  # noqa: F401
+from .utils import interpolate_missing_dates  # noqa: F401
 from .utils import quantiles  # noqa: F401
-from .utils import samples_to_quantiles
+from .utils import samples_to_quantiles  # noqa: F401
+from .utils import set_historical_na_to_zero  # noqa: F401
 
 #
 # Discover and lazy import model definitions

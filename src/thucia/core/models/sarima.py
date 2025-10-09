@@ -48,6 +48,7 @@ def sarima(
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
+    retrain: bool = True,  # no effect
 ) -> pd.DataFrame:
     logging.info("Starting SARIMA forecasting pipeline...")
 

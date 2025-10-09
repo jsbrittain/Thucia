@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from darts.models import NBEATSModel
-from darts.utils.likelihood_models import QuantileRegression
+from darts.utils.likelihood_models import GaussianLikelihood
 
 from .darts import DartsBase
 
@@ -17,11 +17,11 @@ class NBEATSSamples(DartsBase):
 
     def build_model(self):
         return NBEATSModel(
-            input_chunk_length=self.input_chunk_length,
+            input_chunk_length=48,
             output_chunk_length=1,
             dropout=0.2,  # MC dropout also adds stochasticity
             generic_architecture=True,  # default; works well for pooled/global
-            likelihood=QuantileRegression(),  # sampling supported
+            likelihood=GaussianLikelihood(),
             random_state=42,
             n_epochs=150,  # default 100
             batch_size=64,
@@ -62,6 +62,7 @@ def nbeats(
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
+    retrain: bool = True,  # Only use False for a quick test
 ) -> pd.DataFrame:
     logging.info("Starting NBEATS forecasting pipeline...")
 
@@ -81,7 +82,7 @@ def nbeats(
     # Historical predictions
     preds_hist = model.historical_predictions(
         start_date=start_date,
-        retrain=True,  # Only use False for a quick test
+        retrain=retrain,
     )
     preds = preds_hist
 

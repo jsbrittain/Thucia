@@ -6,6 +6,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 
 from .adapter import residual_regression as residual_regression
+from .residual_quantiles import add_residual_quantiles as add_residual_quantiles
 
 quantiles = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
 

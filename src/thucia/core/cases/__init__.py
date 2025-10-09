@@ -158,8 +158,11 @@ def read_nc(filename: str | Path) -> pd.DataFrame:
 
 
 def _filter_and_separate(df, pred_col, true_col, transform=None, df_filter: dict = {}):
+    if df_filter is None:
+        df_filter = {}
     for key, value in df_filter.items():
         df = df[df[key] == value]
+
     y_true = df[true_col]
     y_pred = df[pred_col]
     kk = np.isfinite(y_true) & np.isfinite(y_pred)
@@ -172,24 +175,11 @@ def _filter_and_separate(df, pred_col, true_col, transform=None, df_filter: dict
     return y_true, y_pred
 
 
-def r2(df, pred_col, true_col, transform=None, df_filter: dict = {}, horizon: int = 1):
-    if "horizon" in df.columns and horizon is not None and df["horizon"].nunique() > 1:
-        r2s = [
-            r2(
-                df[df["horizon"] == h],
-                pred_col,
-                true_col,
-                transform,
-                df_filter,
-                horizon=None,
-            )
-            for h in df["horizon"].unique()
-        ]
-        print(r2s)
-        return r2s
-    if "quantile" in df.columns:
-        df = df[df["quantile"] == 0.5]
-    y_true, y_pred = _filter_and_separate(df, pred_col, true_col, transform, df_filter)
+def r2_score(y_true, y_pred):
+    kk = np.isfinite(y_true) & np.isfinite(y_pred)
+    y_true = y_true[kk]
+    y_pred = y_pred[kk]
+
     ss_res = np.sum((y_true - y_pred) ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
 
@@ -197,13 +187,102 @@ def r2(df, pred_col, true_col, transform=None, df_filter: dict = {}, horizon: in
     return r2x
 
 
-def rmse(df, pred_col, true_col, transform=None, df_filter: dict = {}):
-    y_true, y_pred = _filter_and_separate(df, pred_col, true_col, transform, df_filter)
+def r2(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict = {}):
+    if not group_col:
+        logging.warning(
+            "No group_col provided for r2 calculation, returning overall r2 score."
+        )
+        y_true, y_pred = _filter_and_separate(
+            df, pred_col, true_col, transform, df_filter
+        )
+        return r2_score(y_true, y_pred)
+
+    if "quantile" in df.columns:
+        df = df[df["quantile"] == 0.5]
+    if df_filter is None:
+        df_filter = {}
+    for key, value in df_filter.items():
+        df = df[df[key] == value]
+
+    r2_gid = pd.DataFrame(columns=[group_col, "R2"])
+    groups = df[group_col].unique()
+    for group in groups:
+        dfg = df[df[group_col] == group].copy()
+        r2_gid = pd.concat(
+            [
+                r2_gid,
+                pd.DataFrame(
+                    {
+                        group_col: [group],
+                        "R2": [
+                            r2_score(
+                                dfg[true_col],
+                                dfg[pred_col],
+                            )
+                        ],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+    return r2_gid["R2"]
+
+
+def rmse_score(y_true, y_pred):
+    kk = np.isfinite(y_true) & np.isfinite(y_pred)
+    y_true = y_true[kk]
+    y_pred = y_pred[kk]
     mse = np.mean((y_true - y_pred) ** 2)
     return np.sqrt(mse)
 
 
-def wis(df, pred_col, true_col, transform=None, df_filter: dict = {}):
+def rmse(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict = {}):
+    if not group_col:
+        logging.warning(
+            "No group_col provided for rmse calculation, returning overall rmse score."
+        )
+        y_true, y_pred = _filter_and_separate(
+            df, pred_col, true_col, transform, df_filter
+        )
+        return rmse_score(y_true, y_pred)
+
+    if "quantile" in df.columns:
+        df = df[df["quantile"] == 0.5]
+    if df_filter is None:
+        df_filter = {}
+    for key, value in df_filter.items():
+        df = df[df[key] == value]
+
+    rmse_gid = pd.DataFrame(columns=[group_col, "RMSE"])
+    groups = df[group_col].unique()
+    for group in groups:
+        dfg = df[df[group_col] == group].copy()
+        rmse_gid = pd.concat(
+            [
+                rmse_gid,
+                pd.DataFrame(
+                    {
+                        group_col: [group],
+                        "RMSE": [
+                            rmse_score(
+                                dfg[true_col],
+                                dfg[pred_col],
+                            )
+                        ],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+    return rmse_gid["RMSE"]
+
+
+def wis(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict = {}):
+    if group_col is not None:
+        logging.warning(
+            "Group_col provided for wis calculation, but WIS is computed over all groups. Ignoring group_col."
+        )
+
     df = df[["GID_2", "Date", "quantile", pred_col, true_col]]
     if transform is not None:
         df.loc[:, true_col] = transform(df[true_col])
@@ -218,7 +297,9 @@ def wis(df, pred_col, true_col, transform=None, df_filter: dict = {}):
         clamp_negative_to_zero=True,
         monotonic_fix=True,
     )
-    return np.nanmean(wis["WIS"])
+    # Average over Date
+    wis_gid = wis.groupby("GID_2").mean().reset_index()
+    return wis_gid
 
 
 def run_job(cmd: list[str], cwd: str | None = None) -> None:

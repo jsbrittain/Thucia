@@ -1,10 +1,8 @@
 import logging
-import random
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import torch
 from thucia.core import models
 from thucia.core.cases import cases_per_month
 from thucia.core.cases import r2
@@ -22,17 +20,6 @@ from thucia.core.models import run_model
 from thucia.core.models.ensemble import create_ensemble
 from thucia.core.models.utils import sanitise_covariates
 from thucia.viz import plot_ensemble_weights_over_time
-# from thucia.core.cases import prepare_embeddings
-# import os
-# from thucia.core.models.utils import residual_regression
-# from prefect.futures import wait
-# from thucia.core.wrappers import flow
-
-seed = 42
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
-# torch.set_float32_matmul_precision('medium')
 
 
 enable_logging(level=logging.DEBUG)
@@ -49,21 +36,15 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
     if False:
         # Aggregate cases per month
         if "Cases" not in df.columns:
-            df = cases_per_month(
-                df
-            )  # ### Make this more dynamic - check for Cases and aggregate based on month anyway ###
+            df = cases_per_month(df)
         df = pad_admin2(df)  # Ensure all Admin-2 regions included for covariate maps
 
-        # ###### we need to add predictors for future months in order to predict cases
-
         # Add predictors for future months
-
         last_date = df["Date"].max()
         n_months = 12
         future_dates = pd.date_range(start=last_date, periods=n_months + 1, freq="ME")[
             1:
         ]
-
         df["future"] = False
         df_last_date = df[df["Date"] == last_date].copy()
         for date in future_dates:
@@ -75,8 +56,6 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
         df.sort_values(by=["Date", "GID_2"], inplace=True)
 
         write_nc(df, path / "cases_per_month.nc")
-
-        # ##############################################################################
 
         df = read_nc(path / "cases_per_month.nc")  # ###
 
@@ -103,10 +82,11 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
 
     df = read_nc(path / "cases_with_climate.nc")
 
-    if True:
+    if False:
         horizon = 12  # ##############################
         model = models.xgboost
         start_date = pd.to_datetime("2015-01-01")
+        retrain = False
 
         from thucia.core.models.utils import (
             filter_admin1,
@@ -211,6 +191,7 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
             horizon=horizon,
             # case_col=case_col,
             covariate_cols=covariate_cols,
+            retrain=retrain,
         )
 
     if False:
@@ -223,7 +204,7 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
         write_nc(df, path / "ensemble_cases_quantiles.nc")
         ensemble_weights.to_csv(path / "ensemble_weights.csv")
 
-    if True:
+    if False:
         logging.info("Reporting statistics for all models")
         # model_list = ["baseline", "inla", "sarima", "tcn", "timesfm", "ensemble"]
         model_list = [name]
@@ -269,50 +250,17 @@ def run_pipeline(iso3: str, adm1: list[str] | None = None):
         )
 
 
-# Some pre-defined pipelines...
-
-
 def run_peru_northwest():
     iso3 = "PER"
     # Custom loading script for Peru's case data
-    # path = (Path("data") / "cases" / iso3).resolve()
-    # run_job(["python", str(path / "load_cases.py")])
+    if Path("data/cases/PER/cases.nc").exists():
+        logging.info("Peru case data already exists, skipping loading step")
+    else:
+        path = (Path("data") / "cases" / iso3).resolve()
+        run_job(["python", str(path / "load_cases.py")])
     # Run the pipeline
     run_pipeline(iso3, ["Piura", "Tumbes", "Lambayeque"])
 
 
-def run_mex_oaxaca():
-    iso3 = "MEX"
-    # Custom loading script for Mexico's case data
-    path = (Path("data") / "cases" / iso3).resolve()
-    run_job(["python", str(path / "load_cases.py")])
-    # Run the pipeline
-    run_pipeline(iso3=iso3, adm1=["Oaxaca"])
-
-
-def run_bra_acra():
-    iso3 = "BRA"
-    # Custom loading script for Brazil's case data
-    # path = (Path("data") / "cases" / iso3).resolve()
-    # run_job(
-    #     [
-    #         "python",
-    #         str(path / "load_cases.py"),
-    #         "--states",
-    #         "Acre",
-    #         "Amazonas",
-    #         "--ey_start",
-    #         "2020",
-    #         "--ew_start",
-    #         "1",
-    #     ],
-    #     cwd=path,
-    # )
-    # Run the pipeline
-    run_pipeline(iso3=iso3, adm1=["São Paulo"])  # , "Minas Gerais"])
-
-
 if __name__ == "__main__":
     run_peru_northwest()
-    # run_mex_oaxaca()
-    # run_bra_acra()
