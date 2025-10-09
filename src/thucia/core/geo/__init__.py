@@ -14,7 +14,7 @@ from .plugin_loader import load_plugins
 plugins = None
 
 
-def lookup_gid1(admin1_names: list[str], iso3: str = "PER"):
+def lookup_gid1(iso3, admin1_names: list[str] | None = None):
     """
     Lookup GID_1 codes for the given administrative level 1 names in a DataFrame.
 
@@ -29,7 +29,8 @@ def lookup_gid1(admin1_names: list[str], iso3: str = "PER"):
         f"Looking up GID_1 codes for Admin-1 names: {admin1_names} in {iso3}..."
     )
     gdf = get_admin2_list(iso3)
-    gdf = gdf[gdf["NAME_1"].isin(admin1_names)]
+    if admin1_names:
+        gdf = gdf[gdf["NAME_1"].isin(admin1_names)]
     admin1_regions = gdf["GID_1"].unique().tolist()
     return admin1_regions
 
@@ -86,7 +87,10 @@ def get_admin2_list(iso3: str) -> pd.DataFrame:
 
 
 def align_admin2_regions(
-    df: pd.DataFrame, admin1_col: str, admin2_col: str, iso3: str
+    df: pd.DataFrame,
+    admin1_col: str | None = "ADM1",
+    admin2_col: str | None = "ADM2",
+    iso3: str | None = None,
 ) -> pd.DataFrame:
     """
     Aligns the administrative level 2 regions in the DataFrame with the standardized
@@ -95,6 +99,7 @@ def align_admin2_regions(
     Parameters:
     df (pd.DataFrame): The DataFrame containing administrative regions.
     admin1_col (str): The column name for administrative level 1 regions.
+                      Can be set to None if not available.
     admin2_col (str): The column name for administrative level 2 regions.
     iso3 (str): The ISO3 code of the country.
 
@@ -102,12 +107,23 @@ def align_admin2_regions(
     GeoDataFrame: The DataFrame with aligned administrative regions.
     """
 
+    use_admin1 = admin1_col is not None
+    if admin2_col is None:
+        raise ValueError("admin2_col must be specified.")
+    if iso3 is None:
+        raise ValueError("iso3 must be specified.")
+
     logging.info(f"Initial data contains {len(df)} records.")
-    logging.info(
-        f"There are {df['ADM1'].nunique()} unique Admin-1 regions and "
-        f"{df['ADM2'].nunique()} unique Admin-2 regions."
-    )
+    if use_admin1:
+        logging.info(
+            f"There are {df[admin1_col].nunique()} unique Admin-1 regions and "
+            f"{df[admin2_col].nunique()} unique Admin-2 regions."
+        )
+    else:
+        logging.info(f"There are {df[admin2_col].nunique()} unique Admin-2 regions.")
     logging.info(f"Aligning administrative regions for {iso3}...")
+
+    df = df.copy()  # make local copy so that original is not modified
 
     def homogenise(x):
         return x.apply(remove_accents).str.replace(" ", "", regex=False).str.lower()
@@ -115,9 +131,9 @@ def align_admin2_regions(
     logging.info("Loading administrative regions...")
     ref_names = get_admin2_list(iso3)
     logging.info("Homogenising administrative names...")
-    adm1h_ref = homogenise(ref_names["NAME_1"])
+    adm1h_ref = homogenise(ref_names["NAME_1"]) if use_admin1 else None
     adm2h_ref = homogenise(ref_names["NAME_2"])
-    adm1h_df = homogenise(df[admin1_col])
+    adm1h_df = homogenise(df[admin1_col]) if use_admin1 else None
     adm2h_df = homogenise(df[admin2_col])
 
     # Build a reference mapping table
@@ -131,25 +147,32 @@ def align_admin2_regions(
     )
 
     # Ensure main DataFrame has the matching homogenized keys
-    df["adm1h"] = adm1h_df
+    if use_admin1:
+        df["adm1h"] = adm1h_df
     df["adm2h"] = adm2h_df
 
-    exact = df.merge(ref_map, on=["adm1h", "adm2h"], how="left")
-    unmatched = exact[exact["NAME_1"].isna() | exact["NAME_2"].isna()].copy()
+    if use_admin1:
+        exact = df.merge(ref_map, on=["adm1h", "adm2h"], how="left")
+        unmatched = exact[exact["NAME_1"].isna() | exact["NAME_2"].isna()].copy()
+    else:
+        exact = df.merge(ref_map, on=["adm2h"], how="left")
+        unmatched = exact[exact["NAME_2"].isna()].copy()
 
-    unique_unmatched_adm1 = unmatched[["ADM1", "adm1h"]].drop_duplicates()
-    unique_unmatched_adm1["fuzzy_match"] = unique_unmatched_adm1["ADM1"].apply(
-        lambda x: fuzzy_match_one(x, ref_names["NAME_1"].tolist())
-    )
+    if use_admin1:
+        unique_unmatched_adm1 = unmatched[[admin1_col, "adm1h"]].drop_duplicates()
+        unique_unmatched_adm1["fuzzy_match"] = unique_unmatched_adm1[admin1_col].apply(
+            lambda x: fuzzy_match_one(x, ref_names["NAME_1"].tolist())
+        )
 
-    unique_unmatched_adm2 = unmatched[["ADM2", "adm2h"]].drop_duplicates()
-    unique_unmatched_adm2["fuzzy_match"] = unique_unmatched_adm2["ADM2"].apply(
+    unique_unmatched_adm2 = unmatched[[admin2_col, "adm2h"]].drop_duplicates()
+    unique_unmatched_adm2["fuzzy_match"] = unique_unmatched_adm2[admin2_col].apply(
         lambda x: fuzzy_match_one(x, ref_names["NAME_2"].tolist())
     )
 
-    adm1_fuzzy_map = dict(
-        zip(unique_unmatched_adm1["adm1h"], unique_unmatched_adm1["fuzzy_match"])
-    )
+    if use_admin1:
+        adm1_fuzzy_map = dict(
+            zip(unique_unmatched_adm1["adm1h"], unique_unmatched_adm1["fuzzy_match"])
+        )
     adm2_fuzzy_map = dict(
         zip(unique_unmatched_adm2["adm2h"], unique_unmatched_adm2["fuzzy_match"])
     )
@@ -164,33 +187,53 @@ def align_admin2_regions(
             return adm2_fuzzy_map[row["adm2h"]]
         return row["NAME_2"]
 
-    exact["NAME_1"] = exact.apply(resolve_fuzzy_admin1, axis=1)
+    if use_admin1:
+        exact["NAME_1"] = exact.apply(resolve_fuzzy_admin1, axis=1)
     exact["NAME_2"] = exact.apply(resolve_fuzzy_admin2, axis=1)
 
-    df[admin1_col] = exact["NAME_1"]
+    if use_admin1:
+        df[admin1_col] = exact["NAME_1"]
     df[admin2_col] = exact["NAME_2"]
 
-    df.drop(columns=["adm1h", "adm2h"], inplace=True)
+    if use_admin1:
+        df.drop(columns=["adm1h", "adm2h"], inplace=True)
+    else:
+        df.drop(columns=["adm2h"], inplace=True)
 
     # Add GID_1 and GID_2 columns
     logging.info("Merging with reference names...")
-    df = df.merge(
-        # Need to include both donating columns, and pairing columns
-        ref_names[["GID_1", "GID_2", "NAME_1", "NAME_2"]],
-        left_on=[admin1_col, admin2_col],
-        right_on=["NAME_1", "NAME_2"],
-        how="left",
-    )
-    df = df.drop(columns=["NAME_1", "NAME_2"])
+    if use_admin1:
+        df = df.merge(
+            # Need to include both donating columns, and pairing columns
+            ref_names[["GID_1", "GID_2", "NAME_1", "NAME_2"]],
+            left_on=[admin1_col, admin2_col],
+            right_on=["NAME_1", "NAME_2"],
+            how="left",
+        )
+        df = df.drop(columns=["NAME_1", "NAME_2"])
+    else:
+        df = df.merge(
+            # Need to include both donating columns, and pairing columns
+            ref_names[["GID_2", "NAME_2"]],
+            left_on=[admin2_col],
+            right_on=["NAME_2"],
+            how="left",
+        )
+        df = df.drop(columns=["NAME_2"])
 
     df.dropna(inplace=True)
 
     logging.info("Alignment complete.")
     logging.info(f"After merging with admin2 regions, there are {len(df)} records.")
-    logging.info(
-        f"After alignment, there are {df['ADM1'].nunique()} unique Admin-1 regions and "
-        f"{df['ADM2'].nunique()} unique Admin-2 regions."
-    )
+    if use_admin1:
+        unique_pairs = df[[admin1_col, admin2_col]].drop_duplicates()
+        logging.info(
+            f"After alignment, there are {len(unique_pairs)} unique Admin-1/Admin-2 region pairs."
+        )
+    else:
+        logging.info(
+            f"After alignment, there are {df[admin2_col].nunique()} unique Admin-2 regions."
+        )
     return df
 
 

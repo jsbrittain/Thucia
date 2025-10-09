@@ -4,34 +4,32 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from darts.models import TCNModel
-from darts.utils.likelihood_models import QuantileRegression
+from darts.models import TFTModel
+from darts.utils.likelihood_models import GaussianLikelihood
 
 from .darts import DartsBase
 
 
-# -------- TCN --------
-class TcnSamples(DartsBase):
+# -------- TFT --------
+class TftSamples(DartsBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.sampling_method = "samples"
 
     def build_model(self):
-        return TCNModel(
-            input_chunk_length=48,  # how many past steps the model can see
-            output_chunk_length=1,  # how many future steps the model predicts at once
-            kernel_size=3,
-            num_filters=4,
-            dropout=0.2,  # enables MC dropout
+        return TFTModel(
+            input_chunk_length=48,
+            output_chunk_length=1,
+            hidden_size=16,
+            lstm_layers=1,
+            num_attention_heads=4,
+            dropout=0.2,  # MC dropout adds stochasticity as well
+            likelihood=GaussianLikelihood(),
             random_state=42,
-            likelihood=QuantileRegression(),  # sampling supported
-            save_checkpoints=False,
-            force_reset=True,
             n_epochs=150,  # default 100
             batch_size=64,
-            optimizer_kwargs={
-                "lr": 1e-4,
-            },
+            force_reset=True,
+            add_relative_index=True,  # gives a simple future encoder even without explicit future covs
         )
 
     def pre_fit(self, target_gids=None, **kwargs):
@@ -61,7 +59,7 @@ class TcnSamples(DartsBase):
 
 
 # -------- pipeline helper --------
-def tcn(
+def tft(
     df: pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
@@ -71,42 +69,26 @@ def tcn(
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
 ) -> pd.DataFrame:
-    logging.info("Starting TCN forecasting pipeline...")
+    logging.info("Starting TFT forecasting pipeline...")
 
     # float32
     float_cols = df.select_dtypes(include="float").columns
     df[float_cols] = df[float_cols].astype(np.float32)
 
-    preds_hist = []
-    gid_list = df["GID_2"].unique().tolist()
-    for ix, gid in enumerate(gid_list):
-        logging.info(f"Processing GID_2: {gid}...")
-        tic = pd.Timestamp.now()
+    model = TftSamples(
+        df=df,
+        case_col=case_col,
+        covariate_cols=covariate_cols,
+        horizon=horizon,
+        num_samples=1000,
+        start_date=start_date,
+    )
 
-        df_gid = df[df["GID_2"] == gid].copy()
+    # Historical predictions
+    preds_hist = model.historical_predictions(
+        start_date=start_date,
+        retrain=retrain,
+    )
+    preds = preds_hist
 
-        model = TcnSamples(
-            df=df_gid,
-            case_col=case_col,
-            covariate_cols=covariate_cols,
-            horizon=horizon,
-            num_samples=1000,
-            start_date=start_date,
-        )
-
-        # Historical predictions
-        preds_hist.append(
-            model.historical_predictions(
-                start_date=start_date,
-                retrain=retrain,
-            )
-        )
-
-        toc = pd.Timestamp.now()
-        logging.info(f"Completed GID_2: {gid} in {toc - tic}.")
-
-        estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
-        logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
-
-    preds = pd.concat(preds_hist).reset_index(drop=True)
     return preds

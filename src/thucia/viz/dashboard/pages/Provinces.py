@@ -14,7 +14,7 @@ st.warning("DEVELOPMENT BUILD")
 # --- Sidebar Controls
 countries = {
     "Peru": "PER",
-    # "Brazil": "BRA",
+    "Brazil": "BRA",
     "Mexico": "MEX",
 }
 metrics = {
@@ -33,11 +33,18 @@ data_folder = (
     / "cases"
     / country
 )
-data_file_list = list(data_folder.glob("*.nc"))
+data_file_list = sorted(list(data_folder.glob("*.nc")))
 data_filename = st.sidebar.selectbox(
     "Data file:", [data_file.name for data_file in data_file_list]
 )
 casedata_filename = str(data_folder / data_filename)
+
+horizon = st.select_slider(
+    "Horizon:",
+    options=list(range(1, 13)),
+    value=1,
+)
+show_interval = st.checkbox("Show Prediction Interval (90%)", value=True)
 
 # --- Load Real Model Data
 with st.spinner("Loading datasets..."):
@@ -45,6 +52,11 @@ with st.spinner("Loading datasets..."):
 
     df = read_nc(str(filename))
     df.fillna(0)
+
+    if "horizon" in df.columns:
+        # If horizons are present, we take the 1-step ahead prediction
+        df = df[df["horizon"] == horizon]
+        df = df.drop(columns=["horizon"])
 
 if "quantile" not in df.columns:
     st.error("The selected dataset does not contain quantile data.")
@@ -57,14 +69,15 @@ def overlay_plot(data, color, **kwargs):
     # Sort data by target_end_date
     data = data.sort_values("Date")
 
-    ax.fill_between(
-        data[data["quantile"] == 0.5]["Date"].values,
-        data[data["quantile"] == 0.05]["prediction"].values,
-        data[data["quantile"] == 0.95]["prediction"].values,
-        color="green",
-        alpha=0.1,
-        label="95% Interval",
-    )
+    if show_interval:
+        ax.fill_between(
+            data[data["quantile"] == 0.5]["Date"].values,
+            data[data["quantile"] == 0.05]["prediction"].values,
+            data[data["quantile"] == 0.95]["prediction"].values,
+            color="green",
+            alpha=0.1,
+            label="95% Interval",
+        )
     sns.lineplot(
         data=data[data["quantile"] == 0.5],
         x="Date",
@@ -84,6 +97,11 @@ def overlay_plot(data, color, **kwargs):
     )
 
 
+if df["GID_2"].nunique() > 10:
+    st.warning("Restricting view to the first 10 provinces only.")
+    df = df[df["GID_2"].isin(df["GID_2"].unique()[:10])]
+
+
 with st.spinner("Analysing datasets..."):
     # Create FacetGrid
     g = sns.FacetGrid(df, col="GID_2", col_wrap=2, height=2.5, aspect=2, sharey=False)
@@ -95,6 +113,6 @@ with st.spinner("Analysing datasets..."):
         ax.xaxis.set_major_locator(mdates.YearLocator(1))
         ax.xaxis.set_tick_params(rotation=45)
     # Figure legend (on second axis only)
-    g.axes.flat[1].legend()
+    # g.axes.flat[1].legend()
 
     st.pyplot(g.figure)
