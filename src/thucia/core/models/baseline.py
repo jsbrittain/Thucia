@@ -61,7 +61,7 @@ class BaselineSamples:
         return result
 
 
-def baseline_horizon(
+def baseline(
     df: pd.DataFrame,  # DataFrame with columns: Date, GID_1, GID_2, Cases, future
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
