@@ -42,8 +42,8 @@ class SarimaQuantiles(DartsBase):
 # -------- pipeline helper --------
 def sarima(
     df: pd.DataFrame,
-    start_date: str | pd.Timestamp = pd.Timestamp.min,
-    end_date: str | pd.Timestamp = pd.Timestamp.max,
+    start_date: str | pd.Timestamp | pd.Period = pd.Timestamp.min,
+    end_date: str | pd.Timestamp | pd.Period = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
     horizon: int = 1,
     case_col: str = "Log_Cases",

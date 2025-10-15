@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional
 
 import numpy as np
@@ -84,21 +85,30 @@ def filter_admin1(df: pd.DataFrame, gid_1: str) -> pd.DataFrame:
 def sanitize_dates_inplace(
     df: pd.DataFrame,
     date_col: str = "Date",
-    start_date: pd.Timestamp | str = pd.Timestamp.min,
-    end_date: pd.Timestamp | str = pd.Timestamp.max,
+    start_date: pd.Timestamp | pd.Period | str = pd.Timestamp.min,
+    end_date: pd.Timestamp | pd.Period | str = pd.Timestamp.max,
 ) -> pd.DataFrame:
     """
     Ensure the date column is in datetime format and at month-end.
     """
+    freq = re.search(r"period\[(.+)\]", df["Date"].dtype.name).group(1)
+    if isinstance(start_date, str):
+        start_date = pd.to_datetime(start_date)
+    if isinstance(end_date, str):
+        end_date = pd.to_datetime(end_date)
+    if isinstance(start_date, pd.Timestamp):
+        start_date = start_date.to_period(freq)
+    if isinstance(end_date, pd.Timestamp):
+        end_date = end_date.to_period(freq)
+
     # Determine start and end dates
-    df.loc[:, date_col] = pd.to_datetime(df[date_col]) + pd.offsets.MonthEnd(0)
-    start_date = max(
-        pd.to_datetime(start_date), df[date_col].min()
-    ) + pd.offsets.MonthEnd(0)
-    end_date = min(pd.to_datetime(end_date), df[date_col].max()) + pd.offsets.MonthEnd(
-        0
+    start_date = max(start_date, df[date_col].min())
+    end_date = min(end_date, df[date_col].max())
+    date_range = pd.period_range(
+        start=start_date,
+        end=end_date,
+        freq=freq,
     )
-    date_range = pd.date_range(start=start_date, end=end_date, freq="ME")
     return date_range
 
 
@@ -173,18 +183,25 @@ def pca_transform(
 
 
 def sanitise_covariates(df, covariate_cols, start_date):
+    if isinstance(start_date, str):
+        start_date = pd.to_datetime(start_date)
+    if isinstance(start_date, pd.Timestamp):
+        freq = re.search(r"period\[(.+)\]", df["Date"].dtype.name).group(1)
+        start_date = pd.to_period(start_date, freq)
+
     # Covariate sanitisation
     for c in covariate_cols:
         # NaN replacement: seasonal mean, forward and back fill
-        df[c] = df.groupby(["GID_2", df["Date"].dt.month])[c].transform(
+        df[c] = df.groupby(["GID_2", df["Date"].dt.month], observed=False)[c].transform(
             lambda s: s.fillna(s.mean())
         )
-        df[c] = df.groupby("GID_2")[c].ffill().bfill()
+        df[c] = df.groupby("GID_2", observed=False)[c].ffill().bfill()
         # Standardise using pre- start date values
         mask = df["Date"] < start_date
-        mu = df[mask][c].mean()
-        sd = np.max([1e-8, df[mask][c].std()])
-        df[c] = (df[c] - mu) / sd
+        if mask.any():
+            mu = df[mask][c].mean()
+            sd = np.max([1e-8, df[mask][c].std()])
+            df[c] = (df[c] - mu) / sd
         # Sanity check
         if df[c].isna().any():
             raise Exception("NaN found in covariates")

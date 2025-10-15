@@ -1,37 +1,43 @@
 import logging
+import re
 import subprocess
 from itertools import product
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import xarray as xr
+from thucia.core.fs import DataFrame
+from thucia.core.fs import read_db  # noqa: F401
+from thucia.core.fs import read_nc  # noqa: F401
+from thucia.core.fs import read_zarr  # noqa: F401
+from thucia.core.fs import write_db  # noqa: F401
+from thucia.core.fs import write_nc  # noqa: F401
+from thucia.core.fs import write_zarr  # noqa: F401
 
 from .wis import wis_bracher
 
 
 def cases_per_month(*args, **kwargs) -> pd.DataFrame:
-    return aggregate_cases(*args, **kwargs, period="M")
+    return aggregate_cases(*args, **kwargs, freq="M")
 
 
 def aggregate_cases(
-    df: pd.DataFrame,
+    df: DataFrame | pd.DataFrame,
     statuses: list[str] | None = None,
     fill_column: str | None = "GID_2",
-    period: str = "M",
+    freq: str = "M",
 ) -> pd.DataFrame:
     """
     Count how many times each exact row appears, grouped by (period) Date
 
     Parameters
     ----------
-    df : pd.DataFrame
+    df : DataFrame | pd.DataFrame
         DataFrame with a 'Date' column and optionally a 'Status' column.
     statuses : list[str], optional
         Subset of Status values to include.
     fill_column : str, optional
         If provided, will fill missing Dates, grouped by 'fill_column'.
-    period : str
+    freq: str
         Resampling period for dates. Default is 'M' (month end). Typical options:
         - 'M': Month end
         - 'W-SUN': Week ending Sunday (Mon-Sun) [ISO week]
@@ -39,9 +45,21 @@ def aggregate_cases(
 
     Returns
     -------
-    pd.DataFrame
-        DataFrame with deduplicated rows + 'Cases' count.
+    DataFrame
+        Reference to temporary Thucia DataFrame, with deduplicated rows + 'Cases' count.
     """
+
+    # Convert to pandas DataFrame (for now)
+    if isinstance(df, DataFrame):
+        df = df.df  # load full pandas DataFrame
+    else:
+        df = df.copy()  # copy of input DataFrame
+
+    if "Cases" in df.columns:
+        logging.warning(
+            "Input DataFrame already contains a 'Cases' column, skipping aggregation."
+        )
+        return df
     if "Date" not in df.columns:
         raise ValueError("DataFrame must contain a 'Date' column.")
 
@@ -52,16 +70,21 @@ def aggregate_cases(
             )
         df = df[df["Status"].isin(statuses)].copy()
 
-    df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"]).dt.to_period(period)
+    incoming_case_count = len(df)
+
+    if not isinstance(df["Date"].dtype, pd.PeriodDtype):
+        df["Date"] = pd.to_datetime(df["Date"]).dt.to_period(freq)
 
     # Prepare columns to group by (exclude Status)
-    group_cols = df.columns.tolist()
+    group_cols = ["Date", "GID_2"]  # df.columns.tolist()
+    gid2_to_gid1 = dict(zip(df["GID_2"], df["GID_1"]))
     if "Status" in group_cols:
         group_cols.remove("Status")
 
     # Group and count cases
-    grouped = df.groupby(group_cols).size().reset_index(name="Cases")
+    df["Cases"] = 1
+    grouped = df.groupby(group_cols, as_index=False, observed=False)["Cases"].sum()
+    grouped["GID_1"] = grouped["GID_2"].map(gid2_to_gid1)
 
     if fill_column is None:
         return grouped.sort_values(by="Date").reset_index(drop=True)
@@ -105,56 +128,18 @@ def aggregate_cases(
         ].set_index(fill_column)[col]
         result[col] = result[fill_column].map(mapping)
 
-    # Sort results nicely
+    # Sort results
     result = result.sort_values(by=["Date", fill_column]).reset_index(drop=True)
 
-    return result
+    # Check case counts match
+    outgoing_case_count = result["Cases"].sum()
+    if incoming_case_count != outgoing_case_count:
+        logging.warning(
+            f"Case count mismatch: incoming {incoming_case_count}, outgoing {outgoing_case_count}"
+        )
 
-
-def write_nc(
-    df: pd.DataFrame | xr.Dataset,
-    filename: str = "cases.nc",
-    index_col: str | None = "Date",
-):
-    """
-    Write the DataFrame or xarray Dataset to a NetCDF file.
-
-    Parameters
-    ----------
-    df : pd.DataFrame or xr.Dataset
-        DataFrame containing case data.
-    filename : str
-        Name of the output NetCDF file.
-    """
-
-    if isinstance(df, pd.DataFrame):
-        if not index_col:
-            df = df.set_index(index_col)
-        ds = df.to_xarray()
-    elif isinstance(df, xr.Dataset):
-        ds = df
-    else:
-        raise TypeError("Input must be a pandas DataFrame or xarray Dataset.")
-
-    ds.to_netcdf(filename, mode="w", format="netcdf4")
-    logging.info(f"Data written to {filename}")
-
-
-def read_nc(filename: str | Path) -> pd.DataFrame:
-    """
-    Read a NetCDF file into a pandas DataFrame.
-
-    Parameters
-    ----------
-    filename : str
-        Name of the NetCDF file to read.
-
-    Returns
-    -------
-    pd.DataFrame
-        The dataset read from the NetCDF file.
-    """
-    return xr.open_dataset(str(filename)).to_dataframe().reset_index()
+    # Convert to Thucia DataFrame and clean up
+    return DataFrame(df=result)
 
 
 def _filter_and_separate(df, pred_col, true_col, transform=None, df_filter: dict = {}):
@@ -329,3 +314,56 @@ def prepare_embeddings(filename: str, embedding_type="pdfm") -> pd.DataFrame:
         return prepare_pdfm_embeddings(filename)
     else:
         raise ValueError(f"Unknown embedding type: {embedding_type}")
+
+
+def align_date_types(
+    source_dates: pd.Series,
+    target_dates: pd.Series,
+) -> pd.Series:
+    """
+    Align the date types of source_dates to match target_dates.
+    If target_dates is a PeriodIndex, convert source_dates to PeriodIndex with same freq.
+    If target_dates is a DatetimeIndex, convert source_dates to DatetimeIndex.
+
+    Parameters
+    ----------
+    source_dates : pd.Series
+        Series of dates to be aligned.
+    target_dates : pd.Series
+        Series of dates to align to.
+
+    Returns
+    -------
+    pd.Series
+        Aligned series of dates.
+    """
+    if pd.api.types.is_period_dtype(target_dates.dtype):
+        freq = re.search(r"period\[(.+)\]", str(target_dates.dtype.name)).group(1)
+        if pd.api.types.is_period_dtype(source_dates.dtype):
+            # Source is already Period, just ensure same freq
+            source_dates = source_dates.dt.asfreq(freq)
+        else:
+            # Convert to datetime, then period
+            source_dates = pd.to_datetime(source_dates)
+            source_dates = source_dates.dt.to_period(freq)
+    else:
+        source_dates = pd.to_datetime(source_dates)
+    return source_dates
+
+
+def check_index_combinations(df: pd.DataFrame, group_cols):
+    """Check that all combinations of group_cols are present in df."""
+    product = []
+    for c in group_cols:
+        product.append(df[c].unique())
+    all_idx = pd.MultiIndex.from_product(product, names=group_cols)
+    present_idx = pd.MultiIndex.from_frame(df[group_cols].drop_duplicates())
+    missing = all_idx.difference(present_idx)
+    if not missing.empty:
+        raise ValueError(f"Missing index combinations in data:\n{missing}")
+
+
+def check_covars_for_nans(df, cols):
+    if df[cols].isnull().any().any():
+        missing = df[df[cols].isnull().any(axis=1)]
+        raise ValueError(f"Missing covariate values in data:\n{missing}")

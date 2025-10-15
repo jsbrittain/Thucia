@@ -4,10 +4,6 @@ from typing import List
 import numpy as np
 import pandas as pd
 
-from .utils import filter_admin1
-from .utils import interpolate_missing_dates
-from .utils import set_historical_na_to_zero
-
 
 class BaselineSamples:
     def __init__(self, inc_diffs: List[float] | np.array, symmetrize: bool = True):
@@ -71,18 +67,24 @@ def baseline(
     end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: list[str] | None = None,
     samples: int = 1000,
+    covariate_cols: list[str] | None = None,
     horizon: int = 1,
     # --- Model parameters ---
     symmetrize: bool = True,
+    # --- Unusued parameters (for compatibility with other models) ---
+    *args,
+    **kwargs,
 ) -> (
     pd.DataFrame
 ):  # DataFrame with columns: GID_2, Date, sample, prediction, Cases, future
     logging.info("Starting baseline model...")
 
+    if args:
+        logging.warning(f"Unused positional arguments: {args}")
+    if kwargs:
+        logging.warning(f"Unused keyword arguments: {kwargs}")
+
     df = df.copy()
-    df = filter_admin1(df, gid_1)
-    df = interpolate_missing_dates(df, start_date, end_date)
-    df = set_historical_na_to_zero(df)
 
     step_ahead = horizon  # Align naming
 

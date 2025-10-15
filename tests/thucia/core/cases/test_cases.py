@@ -6,18 +6,24 @@ from thucia.core.cases import cases_per_month
 def test_cases_per_month_fills_zeros():
     # Sample data with missing province-date combos
     data = {
-        "Province": ["A", "A", "B"],
+        "GID_1": ["A"] * 3,
+        "GID_2": ["A_A", "A_A", "A_B"],
         "Date": ["2025-01-15", "2025-02-20", "2025-01-10"],
-        "Status": ["active", "active", "active"],
+        "Status": ["active"] * 3,
     }
     df = pd.DataFrame(data)
 
-    result = cases_per_month(df, fill_column="Province")
-    expected_dates = pd.to_datetime(["2025-01-31", "2025-02-28"])
-    expected_index = pd.MultiIndex.from_product(
-        [["A", "B"], expected_dates], names=["Province", "Date"]
+    result = cases_per_month(df).df  # default: monthly
+    expected_dates = pd.Series(
+        [
+            pd.Period("2025-01", freq="M"),
+            pd.Period("2025-02", freq="M"),
+        ]
     )
-    result = result.set_index(["Province", "Date"]).sort_index()
+    expected_index = pd.MultiIndex.from_product(
+        [["A_A", "A_B"], expected_dates], names=["GID_2", "Date"]
+    )
+    result = result.set_index(["GID_2", "Date"]).sort_index()
 
     # Assert that Dates are periods, with month end frequency
     assert result.index.dtypes["Date"] == "period[M]"
@@ -27,22 +33,23 @@ def test_cases_per_month_fills_zeros():
         assert combo in result.index, f"Missing combination {combo}"
 
     # Check case counts
-    assert result.loc[("A", pd.Timestamp("2025-01-31")), "Cases"] == 1
-    assert result.loc[("A", pd.Timestamp("2025-02-28")), "Cases"] == 1
-    assert result.loc[("B", pd.Timestamp("2025-01-31")), "Cases"] == 1
-    assert result.loc[("B", pd.Timestamp("2025-02-28")), "Cases"] == 0
+    assert result.loc[("A_A", pd.Period("2025-01", freq="M")), "Cases"] == 1
+    assert result.loc[("A_A", pd.Period("2025-02", freq="M")), "Cases"] == 1
+    assert result.loc[("A_B", pd.Period("2025-01", freq="M")), "Cases"] == 1
+    assert result.loc[("A_B", pd.Period("2025-02", freq="M")), "Cases"] == 0
 
 
 def test_aggregate_cases_epiweek_monday():
     # Sample data with missing province-date combos
     data = {
-        "Province": ["A", "A", "B"],
+        "GID_1": ["A"] * 3,
+        "GID_2": ["A_A", "A_A", "A_B"],
         "Date": ["2025-01-15", "2025-02-20", "2025-01-10"],
-        "Status": ["active", "active", "active"],
+        "Status": ["active"] * 3,
     }
     df = pd.DataFrame(data)
 
-    result = aggregate_cases(df, fill_column="Province", period="W-SAT")
+    result = aggregate_cases(df, fill_column="GID_2", freq="W-SAT").df
 
     # Assert that Dates are periods, with month end frequency
     assert result["Date"].dtype == "period[W-SAT]"  # week end Saturday
@@ -53,13 +60,14 @@ def test_aggregate_cases_epiweek_monday():
 def test_aggregate_cases_epiweek_sunday():
     # Sample data with missing province-date combos
     data = {
-        "Province": ["A", "A", "B"],
+        "GID_1": ["A"] * 3,
+        "GID_2": ["A_A", "A_A", "A_B"],
         "Date": ["2025-01-15", "2025-02-20", "2025-01-10"],
-        "Status": ["active", "active", "active"],
+        "Status": ["active"] * 3,
     }
     df = pd.DataFrame(data)
 
-    result = aggregate_cases(df, fill_column="Province", period="W-SUN")
+    result = aggregate_cases(df, fill_column="GID_2", freq="W-SUN").df
 
     # Assert that Dates are periods, with month end frequency
     assert result["Date"].dtype == "period[W-SUN]"

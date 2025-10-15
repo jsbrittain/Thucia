@@ -4,6 +4,7 @@ import logging
 import pandas as pd
 import requests
 from pandas.tseries.offsets import MonthEnd
+from thucia.core.cases import align_date_types
 from thucia.core.geo.plugin_base import SourceBase
 
 
@@ -59,6 +60,12 @@ class NOAA(SourceBase):
         measures: list[str] | None = None,
     ) -> pd.DataFrame:
         logging.info("Merging ONI data with case data by Date...")
-        df_merged = df.merge(self._oni_df, on="Date", how="left")
+
+        stats = self._oni_df
+
+        # Align date formats for merging
+        stats["Date"] = align_date_types(stats["Date"], df["Date"])
+
+        df_merged = df.merge(stats, on="Date", how="left")
         logging.info("Merge complete.")
         return df_merged

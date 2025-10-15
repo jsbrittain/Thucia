@@ -8,6 +8,7 @@ import requests
 from rapidfuzz import fuzz
 from rapidfuzz import process
 from thucia.core.fs import cache_folder
+from thucia.core.fs import DataFrame
 
 from .plugin_loader import load_plugins
 
@@ -196,8 +197,38 @@ def align_admin2_regions(
     df[admin2_col] = exact["NAME_2"]
 
     if use_admin1:
+        unmatched_regions = (
+            df[df[admin1_col].isna()]
+            .drop_duplicates(subset=["adm1h", "adm2h"])
+            .sort_values(by=["adm1h", "adm2h"])
+        )
+        unmatched_regions = unmatched_regions.merge(
+            ref_map[["adm1h", "adm2h", "NAME_1", "NAME_2"]],
+            on=["adm1h", "adm2h"],
+            how="left",
+        )
+        if not unmatched_regions.empty:
+            logging.warning(
+                "The following homogenised region names could not be matched: "
+                f"{unmatched_regions}"
+            )
         df.drop(columns=["adm1h", "adm2h"], inplace=True)
     else:
+        unmatched_regions = (
+            df[df[admin2_col].isna()]
+            .drop_duplicates(subset=["adm2h"])
+            .sort_values(by=["adm2h"])
+        )
+        unmatched_regions = unmatched_regions.merge(
+            ref_map[["adm2h", "NAME_2"]],
+            on=["adm2h"],
+            how="left",
+        )
+        if not unmatched_regions.empty:
+            logging.warning(
+                "The following homogenised region names could not be matched: "
+                f"{unmatched_regions}"
+            )
         df.drop(columns=["adm2h"], inplace=True)
 
     # Add GID_1 and GID_2 columns
@@ -337,13 +368,17 @@ def convert_to_incidence_rate(
     return df_with_pop
 
 
-def pad_admin2(df: pd.DataFrame) -> pd.DataFrame:
+def pad_admin2(df: DataFrame | pd.DataFrame) -> DataFrame:
     """
     Ensure all Admin-2 regions are included in the DataFrame, even those with zero
     cases.
     """
-    if "GID_2" not in df.columns or "ADM2" not in df.columns:
-        raise ValueError("DataFrame must contain 'GID_2' and 'ADM2' columns.")
+
+    if isinstance(df, DataFrame):
+        df = df.df  # convert to pandas DataFrame (quick fix, consider function rewrite)
+
+    if "GID_2" not in df.columns:
+        raise ValueError("DataFrame must contain 'GID_2' column.")
 
     # Get unique Admin-2 regions
     gid0 = df["GID_2"].iloc[0][:3]  # Assuming GID_2 starts with GID-0
@@ -352,32 +387,30 @@ def pad_admin2(df: pd.DataFrame) -> pd.DataFrame:
 
     # Find missing Admin-2 regions
     missing_admin2 = set(all_admin2["GID_2"].unique()) - set(unique_admin2)
-    unique_dates = df["Date"].unique()
+    date_list = list(df["Date"].drop_duplicates().sort_values())
+    n_dates = len(date_list)
 
     # Create a DataFrame for missing regions with zero cases
     missing_df = []
     for adm2 in missing_admin2:
-        missing_df.append(
-            pd.DataFrame(
-                {
-                    "Date": pd.to_datetime(unique_dates).tolist(),
-                    "ADM1": [
-                        all_admin2["NAME_1"][all_admin2["GID_2"] == adm2].values[0]
-                    ]
-                    * len(unique_dates),
-                    "ADM2": [
-                        all_admin2["NAME_2"][all_admin2["GID_2"] == adm2].values[0]
-                    ]
-                    * len(unique_dates),
-                    "GID_1": [
-                        all_admin2["GID_1"][all_admin2["GID_2"] == adm2].values[0]
-                    ]
-                    * len(unique_dates),
-                    "GID_2": [adm2] * len(unique_dates),
-                    "Cases": [0] * len(unique_dates),
-                }
-            )
+        df_entry = pd.DataFrame(
+            {
+                "Date": date_list,
+                "GID_1": [all_admin2["GID_1"][all_admin2["GID_2"] == adm2].values[0]]
+                * n_dates,
+                "GID_2": [adm2] * n_dates,
+                "Cases": [0] * n_dates,
+            }
         )
+        if "ADM1" in df.columns:
+            df_entry["ADM1"] = all_admin2["NAME_1"][all_admin2["GID_2"] == adm2].values[
+                0
+            ]
+        if "ADM2" in df.columns:
+            df_entry["ADM2"] = all_admin2["NAME_2"][all_admin2["GID_2"] == adm2].values[
+                0
+            ]
+        missing_df.append(df_entry)
 
     # Concatenate the original DataFrame with the missing regions
     result = (
@@ -386,20 +419,28 @@ def pad_admin2(df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     result.sort_values(by=["Date", "GID_2"], inplace=True)
-    return result
+
+    # Convert to Thucia DataFrame and clean up
+    out = DataFrame(df=result)
+    del result
+    return out
 
 
 def merge_sources(df, covars: list[str]) -> None:
     """
     Merge geographic and climatological covariates into the main DataFrame.
-    This function is a placeholder for actual merging logic.
     """
-    # Schedule source aggregation tasks (could parallelise this)
+    categorical_covars = ["GID_1", "GID_2", "ADM1", "ADM2", "Status"]
     for covar in covars:
         df_covar = merge_geo_sources(df, [covar])
+        for cat in categorical_covars:
+            if cat in df_covar.columns:
+                df_covar[cat] = df_covar[cat].astype("category")
         merge_vars = list(
             set(["GID_2", "Date"])
             | (set(df_covar.columns.tolist()) - set(df.columns.tolist()))
         )
+        logging.info("Performing merge with variables: " + ", ".join(merge_vars))
         df = df.merge(df_covar[merge_vars], on=["GID_2", "Date"], how="left")
+        logging.info(f"After merging {covar}, there are {len(df)} records.")
     return df
