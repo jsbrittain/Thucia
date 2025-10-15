@@ -5,7 +5,7 @@ import geopandas as gpd
 import numpy as np
 import pydeck as pdk
 import streamlit as st
-from thucia.core.cases import read_nc
+from thucia.core.cases import read_db
 from thucia.core.fs import cache_folder
 
 st.set_page_config(layout="wide")
@@ -26,7 +26,6 @@ admin_levels = {
 basemaps = {
     "Light": "light",
     "Dark": "dark",
-    # "Satellite": "satellite",
     "Road": "road",
 }
 colormaps = {
@@ -49,10 +48,17 @@ data_folder = (
     / "cases"
     / country
 )
-data_file_list = list(data_folder.glob("*.nc"))
+data_file_list = (
+    list(data_folder.glob("*.duckdb"))
+    + list(data_folder.glob("*.nc"))
+    + list(data_folder.glob("*.zarr"))
+)
 data_filename = st.sidebar.selectbox(
     "Data file:", [data_file.name for data_file in data_file_list]
 )
+if data_filename is None:
+    st.error("No data files found.")
+    st.stop()
 casedata_filename = str(data_folder / data_filename)
 
 # Load geospatial data
@@ -79,14 +85,21 @@ def get_colormap():
 
 
 # --- Date slider
-case_data = read_nc(str(data_folder / "cases_with_climate.nc"))  # base dataset
+try:
+    case_data = read_db(str(data_folder / "cases_with_climate")).df  # base dataset
+except FileNotFoundError:
+    prediction_data = read_db(casedata_filename).df
 
 # Now read model predictions and merge with case data
-prediction_data = read_nc(casedata_filename)
+prediction_data = read_db(casedata_filename).df
 
 if "horizon" in prediction_data.columns:
     # If horizons are present, we take the 1-step ahead prediction
-    prediction_data = prediction_data[prediction_data["horizon"] == 1]
+    horizon_choice = st.selectbox(
+        "Select prediction horizon (steps ahead):",
+        sorted(prediction_data["horizon"].unique()),
+    )
+    prediction_data = prediction_data[prediction_data["horizon"] == horizon_choice]
     prediction_data = prediction_data.drop(columns=["horizon"])
 
 if "quantile" in prediction_data.columns:
@@ -98,14 +111,21 @@ if "quantile" in prediction_data.columns:
         on=["Date", "GID_2"],
         how="left",
     )
+    st.info("Probabilistic estimate - showing median.")
+
 if "sample" in prediction_data.columns:
     # If samples are present, we take the median
-    prediction_data = prediction_data.groupby(["Date", "GID_2"]).median().reset_index()
+    prediction_data = (
+        prediction_data.groupby(["Date", "GID_2"], observed=False)
+        .median()
+        .reset_index()
+    )
     case_data = case_data.merge(
         prediction_data[["Date", "GID_2", "prediction"]],
         on=["Date", "GID_2"],
         how="left",
     )
+    st.info("Probabilistic estimate - showing median.")
 
 available_dates = sorted(case_data["Date"].unique())
 start_date, end_date = st.select_slider(
@@ -133,7 +153,7 @@ case_data = (
     case_data[(case_data["Date"] >= start_date) & (case_data["Date"] <= end_date)][
         [metric, "GID_1"]
     ]
-    .groupby(case_data["GID_2"])
+    .groupby(case_data["GID_2"], observed=False)
     .agg(
         {
             metric: metric_op,
@@ -146,7 +166,7 @@ case_data = (
 if admin_level == "ADM1":
     # Aggregate over GID_2 for ADM1 level
     case_data = (
-        case_data.groupby("GID_1")
+        case_data.groupby("GID_1", observed=False)
         .agg(
             {
                 metric: metric_op,
@@ -177,6 +197,7 @@ alpha_value = st.sidebar.slider(
 model_data = {
     gid2: cases
     for gid2, cases in zip(case_data[gid_lookup].values, case_data[metric].values)
+    if not np.isnan(cases)
 }
 color_white = [255, 255, 255, alpha_value]
 
@@ -188,25 +209,28 @@ geojson["geometry"] = geojson["geometry"].simplify(
 geojson["data"] = ["-"] * len(geojson)
 geojson["fill_color"] = [color_white] * len(geojson)
 
-
-min_data = np.nanmin(list(model_data.values()))
-max_data = np.nanmax(list(model_data.values()))
-if min_data == max_data:
-    min_data = 0
-if min_data == max_data:
-    max_data = 1
-if max_data > 0:
-    color_white = [255, 255, 255, alpha_value]
-    for i, line in geojson.iterrows():
-        name = line[gid_lookup]
-        data = model_data.get(name, np.nan)
-        if not np.isnan(data):
-            # scale color to data
-            normalised_data = (data - min_data) / (max_data - min_data)
-            geojson.at[i, "data"] = f"{data}"
-            geojson.at[i, "fill_color"] = get_color(
-                normalised_data, get_colormap(), alpha_value
-            )
+if len(model_data) == 0:
+    min_data = np.nan
+    max_data = np.nan
+else:
+    min_data = np.nanmin(list(model_data.values()))
+    max_data = np.nanmax(list(model_data.values()))
+    if min_data == max_data:
+        min_data = 0
+    if min_data == max_data:
+        max_data = 1
+    if max_data > 0:
+        color_white = [255, 255, 255, alpha_value]
+        for i, line in geojson.iterrows():
+            name = line[gid_lookup]
+            data = model_data.get(name, np.nan)
+            if not np.isnan(data):
+                # scale color to data
+                normalised_data = (data - min_data) / (max_data - min_data)
+                geojson.at[i, "data"] = f"{data}"
+                geojson.at[i, "fill_color"] = get_color(
+                    normalised_data, get_colormap(), alpha_value
+                )
 
 # --- Select basemap
 minx, miny, maxx, maxy = geojson["geometry"].total_bounds

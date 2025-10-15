@@ -7,6 +7,7 @@ import pandas as pd
 import rasterio
 import requests
 from thucia.core.cache import Cache
+from thucia.core.cases import align_date_types
 from thucia.core.fs import cache_folder
 from thucia.core.geo.plugin_base import SourceBase
 from thucia.core.geo.stats import raster_stats_gid2
@@ -256,6 +257,9 @@ class WorldClim(SourceBase):
             stats = pd.concat(stats, ignore_index=True)
             col_map = {f"{measure}": f"{metric}_{measure}" for measure in measures}
             stats.rename(columns=col_map, inplace=True)
+
+            # Align date formats for merging
+            stats["Date"] = align_date_types(stats["Date"], df["Date"])
 
             # Merge with the original DataFrame
             df = df.merge(

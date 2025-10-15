@@ -2,6 +2,7 @@ import argparse
 import subprocess
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
+from pathlib import Path
 
 try:
     __version__ = version("thucia")
@@ -11,7 +12,7 @@ except PackageNotFoundError:
 
 
 def launch_dashboard(args):
-    app_path = "src/thucia/viz/dashboard/app.py"
+    app_path = Path(__file__).parent / "viz" / "dashboard" / "app.py"
     subprocess.run(["streamlit", "run", app_path], check=True)
 
 

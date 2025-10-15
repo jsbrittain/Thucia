@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from thucia.core.cases import write_nc
+from thucia.core.cases import write_db
 from thucia.core.geo import convert_to_incidence_rate  # noqa: F401
 
 from .utils import filter_admin1  # noqa: F401
@@ -48,12 +48,12 @@ def run_model(
     path: Path,
     save_samples=False,
     save_quantiles=True,
-    *args,
-    **kwargs,
+    model_args=[],
+    model_kwargs={},
 ):
     # Cases
     tic = pd.Timestamp.now()
-    df_model = model(df, *args, **kwargs)
+    df_model = model(df, *model_args, **model_kwargs)
     toc = pd.Timestamp.now()
 
     if "Cases" not in df_model.columns and "Log_Cases" in df_model.columns:
@@ -65,7 +65,7 @@ def run_model(
     # Save samples
     if save_samples:
         if "sample" not in df_model.columns:
-            write_nc(df_model, path / f"{name}_cases_samples.nc")
+            write_db(df_model, path / f"{name}_cases_samples")
         else:
             logging.warning(
                 f"Model {name} did not produce samples, saving quantiles instead."
@@ -85,9 +85,9 @@ def run_model(
     # Save quantiles
     if save_quantiles:
         if "quantile" not in df_model.columns:
-            write_nc(df_model, path / f"{name}_cases_quantiles.nc")
+            write_db(df_model, path / f"{name}_cases_quantiles")
         else:
-            write_nc(df_model, path / f"{name}_cases_quantiles.nc")
+            write_db(df_model, path / f"{name}_cases_quantiles")
 
     # # Dengue incidence rate
     # df_dir_samples = convert_to_incidence_rate(df_cases_samples, df)
@@ -96,3 +96,5 @@ def run_model(
     # if save_quantiles:
     #     df_dir_quantiles = samples_to_quantiles(df_dir_samples)
     #     write_nc(df_dir_quantiles, path / f"{name}_dir_quantiles.nc")
+
+    return df_model

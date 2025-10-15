@@ -4,7 +4,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
-from thucia.core.cases import read_nc
+from thucia.core.cases import read_db
 
 st.set_page_config(layout="wide")
 st.title("🦟 Dengue Prediction Platform")
@@ -33,10 +33,17 @@ data_folder = (
     / "cases"
     / country
 )
-data_file_list = sorted(list(data_folder.glob("*.nc")))
+data_file_list = (
+    list(data_folder.glob("*.duckdb"))
+    + list(data_folder.glob("*.nc"))
+    + list(data_folder.glob("*.zarr"))
+)
 data_filename = st.sidebar.selectbox(
     "Data file:", [data_file.name for data_file in data_file_list]
 )
+if data_filename is None:
+    st.error("No data files found.")
+    st.stop()
 casedata_filename = str(data_folder / data_filename)
 
 horizon = st.select_slider(
@@ -50,8 +57,8 @@ show_interval = st.checkbox("Show Prediction Interval (90%)", value=True)
 with st.spinner("Loading datasets..."):
     filename = casedata_filename
 
-    df = read_nc(str(filename))
-    df.fillna(0)
+    df = read_db(str(filename)).df
+    # df.fillna(0)
 
     if "horizon" in df.columns:
         # If horizons are present, we take the 1-step ahead prediction
@@ -102,17 +109,27 @@ if df["GID_2"].nunique() > 10:
     df = df[df["GID_2"].isin(df["GID_2"].unique()[:10])]
 
 
+# Plot cannot cope with period dates
+df["Date"] = df["Date"].astype("datetime64[ns]")
+
+
 with st.spinner("Analysing datasets..."):
     # Create FacetGrid
-    g = sns.FacetGrid(df, col="GID_2", col_wrap=2, height=2.5, aspect=2, sharey=False)
-    g.map_dataframe(overlay_plot)
-    g.set_axis_labels("Date", metric_name)
-    # Format x-axis labels to be Year only (no repeat labels)
-    for ax in g.axes.flat:
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-        ax.xaxis.set_major_locator(mdates.YearLocator(1))
-        ax.xaxis.set_tick_params(rotation=45)
-    # Figure legend (on second axis only)
-    # g.axes.flat[1].legend()
+    try:
+        g = sns.FacetGrid(
+            df, col="GID_2", col_wrap=2, height=2.5, aspect=2, sharey=False
+        )
+        g.map_dataframe(overlay_plot)
+        g.set_axis_labels("Date", metric_name)
+        # Format x-axis labels to be Year only (no repeat labels)
+        for ax in g.axes.flat:
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+            ax.xaxis.set_major_locator(mdates.YearLocator(1))
+            ax.xaxis.set_tick_params(rotation=45)
+        # Figure legend (on second axis only)
+        # g.axes.flat[1].legend()
 
-    st.pyplot(g.figure)
+        st.pyplot(g.figure)
+    except Exception as e:
+        st.error(f"Error creating plots: {e}")
+        st.stop()
