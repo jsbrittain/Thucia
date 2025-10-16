@@ -29,9 +29,15 @@ class NBEATSSamples(DartsBase):
         )
 
     def pre_fit(self, target_gids=None, **kwargs):
+        logging.info(
+            "Fitting NBEATS model on historical data "
+            f"({self.train_start_date} to {self.train_end_date})..."
+        )
         target_list, covar_list, _ = self.get_cases(
             future=False,
             target_gids=target_gids,
+            start_date=self.train_start_date,
+            end_date=self.train_end_date,
         )  # historical data only
         self.model.fit(
             series=target_list,
@@ -40,6 +46,10 @@ class NBEATSSamples(DartsBase):
         )
 
     def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+        logging.info(
+            "Generating NBEATS historical forecasts "
+            f"from {start_date} with retrain={retrain}..."
+        )
         bt = self.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
@@ -58,6 +68,8 @@ def nbeats(
     df: pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
+    train_start_date: str | pd.Timestamp = pd.Timestamp.min,
+    train_end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
     horizon: int = 1,
     case_col: str = "Log_Cases",
@@ -76,7 +88,8 @@ def nbeats(
         covariate_cols=covariate_cols,
         horizon=horizon,
         num_samples=1000,
-        start_date=start_date,
+        train_start_date=train_start_date,
+        train_end_date=train_end_date,
     )
 
     # Historical predictions

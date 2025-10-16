@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 from darts import TimeSeries
+from thucia.core.cases import align_date_types
 from thucia.core.models.utils import sample_to_quantiles_vec
 
 torch.set_float32_matmul_precision(
@@ -23,7 +24,8 @@ class DartsBase:
         covariate_cols: Optional[List[str]] = None,
         horizon=1,
         num_samples=1000,
-        start_date=None,
+        train_start_date=None,
+        train_end_date=None,
     ):
         self.df = df
         self.case_col = case_col
@@ -32,8 +34,6 @@ class DartsBase:
         self.covariate_cols = covariate_cols or []
         self.horizon = horizon
         self.num_samples = num_samples
-        self.start_date = start_date
-        self.freqstr = "ME"  # df[date_col].dt.freqstr
 
         self.quantiles = [
             0.01,
@@ -53,14 +53,37 @@ class DartsBase:
             0.99,
         ]
 
+        # Training period
+        if train_start_date is None:
+            train_start_date = pd.Timestamp.min
+        if train_end_date is None:
+            train_end_date = pd.Timestamp.max
+        train_start_date = max(
+            align_date_types(train_start_date, self.df[self.date_col]),
+            self.df[self.date_col].min(),
+        )
+        train_end_date = min(
+            align_date_types(train_end_date, self.df[self.date_col]),
+            self.df[self.date_col].max(),
+        )
+        self.train_start_date = train_start_date
+        self.train_end_date = train_end_date
+
         # Parameters and functionality provided by subclasses
         self.sampling_method = None
         self.model = self.build_model()
 
+    # Child classes must override this method to provide concrete functionality
     def build_model(self):
         raise NotImplementedError
 
-    def get_cases(self, future=None, target_gids: Optional[List[str]] = None):
+    def get_cases(
+        self,
+        future=None,
+        target_gids: Optional[List[str]] = None,
+        start_date: Optional[pd.Timestamp] = None,
+        end_date: Optional[pd.Timestamp] = None,
+    ):
         if future is None:
             # Use all data
             df = self.df
@@ -72,10 +95,22 @@ class DartsBase:
         if target_gids is None:
             target_gids = df["GID_2"].unique()
 
+        if start_date is None:
+            start_date = df[self.date_col].min()
+        if end_date is None:
+            end_date = df[self.date_col].max()
+
+        start_date = align_date_types(start_date, df[self.date_col])
+        end_date = align_date_types(end_date, df[self.date_col])
+
         target_list = []
         covar_list = []
         for gid in target_gids:
-            gdf = df[df["GID_2"] == gid]
+            gdf = df[
+                (df["GID_2"] == gid)
+                & (df["Date"] >= start_date)
+                & (df["Date"] <= end_date)
+            ]
             freq = gdf["Date"].dtype.freq.freqstr
             # darts requires timestamp
             gdf = gdf.assign(Date=gdf["Date"].dt.to_timestamp(how="end"))
@@ -107,6 +142,9 @@ class DartsBase:
         start_date: Optional[pd.Timestamp] = None,
     ) -> pd.DataFrame:
         df = self.df
+
+        if start_date is None:
+            start_date = df["Date"].min()
 
         # Model pre-fit
         target_gids = df["GID_2"].unique()

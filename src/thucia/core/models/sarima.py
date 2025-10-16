@@ -62,7 +62,6 @@ def sarima(
         covariate_cols=covariate_cols,
         horizon=horizon,
         num_samples=1000,
-        start_date=start_date,
     )
 
     # Historical predictions

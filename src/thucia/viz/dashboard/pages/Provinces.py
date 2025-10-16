@@ -15,6 +15,7 @@ st.warning("DEVELOPMENT BUILD")
 countries = {
     "Peru": "PER",
     "Brazil": "BRA",
+    "Brazil-WHO": "BRA_who",
     "Mexico": "MEX",
 }
 metrics = {
@@ -51,7 +52,9 @@ horizon = st.select_slider(
     options=list(range(1, 13)),
     value=1,
 )
+
 show_interval = st.checkbox("Show Prediction Interval (90%)", value=True)
+show_observed = st.checkbox("Show Observed", value=True)
 
 # --- Load Real Model Data
 with st.spinner("Loading datasets..."):
@@ -93,15 +96,16 @@ def overlay_plot(data, color, **kwargs):
         label="Prediction",
         color="green",
     )
-    sns.scatterplot(
-        data=data[data["quantile"] == 0.5],
-        x="Date",
-        y="Cases",
-        ax=ax,
-        label="Observed",
-        color="red",
-        s=20,
-    )
+    if show_observed:
+        sns.scatterplot(
+            data=data[data["quantile"] == 0.5],
+            x="Date",
+            y="Cases",
+            ax=ax,
+            label="Observed",
+            color="red",
+            s=20,
+        )
 
 
 if df["GID_2"].nunique() > 10:
@@ -127,7 +131,8 @@ with st.spinner("Analysing datasets..."):
             ax.xaxis.set_major_locator(mdates.YearLocator(1))
             ax.xaxis.set_tick_params(rotation=45)
         # Figure legend (on second axis only)
-        # g.axes.flat[1].legend()
+        if len(g.axes.flat) > 0:
+            g.axes.flat[0].legend()
 
         st.pyplot(g.figure)
     except Exception as e:

@@ -40,6 +40,9 @@ class TimesFMSamples(DartsBase):
         dates = ts.time_index
         output = []
         for tix, t in enumerate(dates):  # forecast target date at horizon
+            if t < start_date:
+                continue
+
             logging.info(f"Forecasting for date: {t}...")
             if tix < self.horizon:
                 logging.info("Not enough data to forecast, skipping...")
@@ -110,7 +113,6 @@ def timesfm(
             covariate_cols=covariate_cols,
             horizon=horizon,
             num_samples=1000,
-            start_date=start_date,
         )
 
         # Historical predictions
