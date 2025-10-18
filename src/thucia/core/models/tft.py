@@ -1,11 +1,12 @@
 import logging
+from pathlib import Path
 from typing import List
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 from darts.models import TFTModel
 from darts.utils.likelihood_models import GaussianLikelihood
+from thucia.core.fs import DataFrame
 
 from .darts import DartsBase
 
@@ -13,29 +14,44 @@ from .darts import DartsBase
 # -------- TFT --------
 class TftSamples(DartsBase):
     def __init__(self, *args, **kwargs):
+        # Model parameters
+        self.input_chunk_length = 48  # how many past steps the model can see
+        self.output_chunk_length = 1  # how many future steps the model predicts at once
+        self.dropout = 0.2  # enables MC dropout
+        self.random_state = 42  # for reproducibility
+        self.n_epochs = 150  # default 100
+        self.batch_size = 64
+
+        # Initialize model
         super().__init__(*args, **kwargs)
         self.sampling_method = "samples"
 
     def build_model(self):
         return TFTModel(
-            input_chunk_length=48,
-            output_chunk_length=1,
+            input_chunk_length=self.input_chunk_length,
+            output_chunk_length=self.output_chunk_length,
             hidden_size=16,
             lstm_layers=1,
             num_attention_heads=4,
-            dropout=0.2,  # MC dropout adds stochasticity as well
+            dropout=self.dropout,
             likelihood=GaussianLikelihood(),
-            random_state=42,
-            n_epochs=150,  # default 100
-            batch_size=64,
+            random_state=self.random_state,
+            n_epochs=self.n_epochs,
+            batch_size=self.batch_size,
             force_reset=True,
             add_relative_index=True,  # gives a simple future encoder even without explicit future covs
         )
 
     def pre_fit(self, target_gids=None, **kwargs):
+        logging.info(
+            "Fitting TFT model on historical data "
+            f"({self.train_start_date} to {self.train_end_date})..."
+        )
         target_list, covar_list, _ = self.get_cases(
             future=False,
             target_gids=target_gids,
+            start_date=self.train_start_date,
+            end_date=self.train_end_date,
         )  # historical data only
         self.model.fit(
             series=target_list,
@@ -44,6 +60,10 @@ class TftSamples(DartsBase):
         )
 
     def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+        logging.info(
+            "Generating TFT historical forecasts "
+            f"from {start_date} with retrain={retrain}..."
+        )
         bt = self.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
@@ -63,32 +83,41 @@ def tft(
     df: pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
+    train_start_date: str | pd.Timestamp = pd.Timestamp.min,
+    train_end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
-) -> pd.DataFrame:
+    db_file: str | Path | None = None,
+    train_per_region: bool = True,  # Train a separate model for each region
+) -> DataFrame | pd.DataFrame:
+    """Temporal Fusion Transformer (TFT) forecasting pipeline.
+
+    Returns a Thucia DataFrame if db_file is specified, otherwise a pandas DataFrame.
+    """
+
     logging.info("Starting TFT forecasting pipeline...")
 
-    # float32
-    float_cols = df.select_dtypes(include="float").columns
-    df[float_cols] = df[float_cols].astype(np.float32)
-
+    # Instantiate model
     model = TftSamples(
         df=df,
         case_col=case_col,
         covariate_cols=covariate_cols,
         horizon=horizon,
         num_samples=1000,
-        start_date=start_date,
+        db_file=db_file,
+        train_start_date=train_start_date,
+        train_end_date=train_end_date,
     )
 
     # Historical predictions
-    preds_hist = model.historical_predictions(
+    tdf = model.historical_predictions(
         start_date=start_date,
         retrain=retrain,
+        train_per_region=train_per_region,
     )
-    preds = preds_hist
+    logging.info("Completed TFT forecasting pipeline.")
 
-    return preds
+    return tdf

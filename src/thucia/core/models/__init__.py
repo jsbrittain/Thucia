@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from thucia.core.cases import write_db
+from thucia.core.fs import DataFrame
 from thucia.core.geo import convert_to_incidence_rate  # noqa: F401
 
 from .utils import filter_admin1  # noqa: F401
@@ -57,13 +58,18 @@ def run_model(
     toc = pd.Timestamp.now()
 
     if "Cases" not in df_model.columns and "Log_Cases" in df_model.columns:
-        df_model["Cases"] = np.expm1(df_model["Log_Cases"]).clip(lower=0)
-        df_model["prediction"] = np.expm1(df_model["prediction"]).clip(lower=0)
+        if isinstance(df_model, pd.DataFrame):
+            df_model["Cases"] = np.expm1(df_model["Log_Cases"]).clip(lower=0)
+            df_model["prediction"] = np.expm1(df_model["prediction"]).clip(lower=0)
+        elif isinstance(df_model, DataFrame):
+            raise NotImplementedError(
+                "Exponentiation not implemented for thucia DataFrame"
+            )
 
     logging.info(f"{name} model run time: {toc - tic}")
 
     # Save samples
-    if save_samples:
+    if save_samples and isinstance(df_model, pd.DataFrame):
         if "sample" not in df_model.columns:
             write_db(df_model, path / f"{name}_cases_samples")
         else:
@@ -75,7 +81,14 @@ def run_model(
     # Check if we need to convert samples to quantiles
     if save_quantiles and "quantile" not in df_model.columns:
         if "sample" in df_model.columns:
-            df_model = samples_to_quantiles(df_model)
+            if isinstance(df_model, pd.DataFrame):
+                df_model = samples_to_quantiles(df_model)
+            elif isinstance(df_model, DataFrame):
+                raise NotImplementedError(
+                    "samples_to_quantiles not implemented for thucia DataFrame"
+                )
+            else:
+                raise TypeError("df_model must be a pd.DataFrame or thucia DataFrame")
         else:
             logging.warning(
                 f"Model {name} did not produce quantiles or samples, skipping save."
@@ -83,11 +96,13 @@ def run_model(
             save_quantiles = False
 
     # Save quantiles
-    if save_quantiles:
-        if "quantile" not in df_model.columns:
+    if save_quantiles and not isinstance(df_model, DataFrame):
+        if "quantile" in df_model.columns:
             write_db(df_model, path / f"{name}_cases_quantiles")
         else:
-            write_db(df_model, path / f"{name}_cases_quantiles")
+            logging.warning(
+                f"Model {name} did not produce quantiles, cannot save quantiles."
+            )
 
     # # Dengue incidence rate
     # df_dir_samples = convert_to_incidence_rate(df_cases_samples, df)

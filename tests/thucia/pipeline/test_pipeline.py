@@ -58,7 +58,7 @@ def test_cases_per_month():
         tdf = pad_admin2(tdf)
 
     # Add placeholders for future months
-    last_date = tdf["Date"].max().to_period("M")
+    last_date = tdf["Date"].max()
     n_months = 12
     future_dates = pd.period_range(
         start=last_date + 1,  # add 1 Period

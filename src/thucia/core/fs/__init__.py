@@ -75,11 +75,18 @@ def write_zarr(
 
 
 def write_db(
-    df: pd.DataFrame,
+    df: pd.DataFrame | DataFrame,
     filename: str,
     table: str | None = None,
     categorical_cols: list[str] | None = None,
 ):
+    if isinstance(df, DataFrame):
+        if df.db_path != ":memory:":
+            logging.warning(
+                "Input is already a Thucia DataFrame. Writing to a new database file."
+            )
+        df = df.df
+
     if table is None:
         table = "data"
 

@@ -55,11 +55,6 @@ def aggregate_cases(
     else:
         df = df.copy()  # copy of input DataFrame
 
-    if "Cases" in df.columns:
-        logging.warning(
-            "Input DataFrame already contains a 'Cases' column, skipping aggregation."
-        )
-        return df
     if "Date" not in df.columns:
         raise ValueError("DataFrame must contain a 'Date' column.")
 
@@ -70,7 +65,10 @@ def aggregate_cases(
             )
         df = df[df["Status"].isin(statuses)].copy()
 
-    incoming_case_count = len(df)
+    if "Cases" in df.columns:
+        incoming_case_count = df["Cases"].sum()
+    else:
+        incoming_case_count = len(df)
 
     if not isinstance(df["Date"].dtype, pd.PeriodDtype):
         df["Date"] = pd.to_datetime(df["Date"]).dt.to_period(freq)
@@ -82,7 +80,8 @@ def aggregate_cases(
         group_cols.remove("Status")
 
     # Group and count cases
-    df["Cases"] = 1
+    if "Cases" not in df.columns:
+        df["Cases"] = 1
     grouped = df.groupby(group_cols, as_index=False, observed=False)["Cases"].sum()
     grouped["GID_1"] = grouped["GID_2"].map(gid2_to_gid1)
 
@@ -317,7 +316,7 @@ def prepare_embeddings(filename: str, embedding_type="pdfm") -> pd.DataFrame:
 
 
 def align_date_types(
-    source_dates: pd.Series,
+    source_dates: pd.Series | pd.Timestamp,
     target_dates: pd.Series,
 ) -> pd.Series:
     """
@@ -327,27 +326,33 @@ def align_date_types(
 
     Parameters
     ----------
-    source_dates : pd.Series
+    source_dates : pd.Series | pd.Timestamp
         Series of dates to be aligned.
     target_dates : pd.Series
         Series of dates to align to.
 
     Returns
     -------
-    pd.Series
-        Aligned series of dates.
+    pd.Series | pd.Timestamp
+        Foramt aligned dates.
     """
-    if pd.api.types.is_period_dtype(target_dates.dtype):
-        freq = re.search(r"period\[(.+)\]", str(target_dates.dtype.name)).group(1)
-        if pd.api.types.is_period_dtype(source_dates.dtype):
-            # Source is already Period, just ensure same freq
-            source_dates = source_dates.dt.asfreq(freq)
+    if isinstance(source_dates, pd.Series):
+        if isinstance(target_dates.dtype, pd.PeriodDtype):
+            freq = re.search(r"period\[(.+)\]", str(target_dates.dtype.name)).group(1)
+            if isinstance(source_dates.dtype, pd.PeriodDtype):
+                # Source is already Period, just ensure same freq
+                source_dates = source_dates.dt.asfreq(freq)
+            else:
+                # Convert to datetime, then period
+                source_dates = pd.to_datetime(source_dates).dt.to_period(freq)
         else:
-            # Convert to datetime, then period
             source_dates = pd.to_datetime(source_dates)
-            source_dates = source_dates.dt.to_period(freq)
-    else:
-        source_dates = pd.to_datetime(source_dates)
+    elif isinstance(source_dates, pd.Timestamp):
+        if isinstance(target_dates.dtype, pd.PeriodDtype):
+            freq = re.search(r"period\[(.+)\]", str(target_dates.dtype.name)).group(1)
+            source_dates = source_dates.to_period(freq)
+        else:
+            source_dates = pd.to_datetime(source_dates)
     return source_dates
 
 

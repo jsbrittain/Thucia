@@ -1,10 +1,11 @@
 import logging
+from pathlib import Path
 from typing import List
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 from darts.models import AutoARIMA
+from thucia.core.fs import DataFrame
 
 from .darts import DartsBase
 
@@ -48,28 +49,28 @@ def sarima(
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
-    retrain: bool = True,  # no effect
-) -> pd.DataFrame:
+    db_file: str | Path | None = None,
+) -> DataFrame | pd.DataFrame:
+    """SARIMA forecasting pipeline.
+
+    Returns a Thucia DataFrame if db_file is specified, otherwise a pandas DataFrame.
+    """
     logging.info("Starting SARIMA forecasting pipeline...")
 
-    # float32
-    float_cols = df.select_dtypes(include="float").columns
-    df[float_cols] = df[float_cols].astype(np.float32)
-
+    # Instantiate model
     model = SarimaQuantiles(
         df=df,
         case_col=case_col,
         covariate_cols=covariate_cols,
         horizon=horizon,
         num_samples=1000,
-        start_date=start_date,
+        db_file=db_file,
     )
 
     # Historical predictions
-    preds_hist = model.historical_predictions(
+    tdf = model.historical_predictions(
         start_date=start_date,
     )
-    preds = preds_hist
     logging.info("Completed SARIMA forecasting pipeline.")
 
-    return preds
+    return tdf

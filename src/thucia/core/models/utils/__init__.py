@@ -27,21 +27,35 @@ def samples_to_quantiles(
     Convert samples in a DataFrame to quantiles using groupby for efficiency.
     Assumes 'prediction' contains multiple samples per date per region.
     """
-    logging.info("Converting samples to quantiles...")
+
+    if "horizon" in df.columns:
+        df_horizons = []
+        for h in df["horizon"].unique().tolist():
+            logging.info(f"Adding residual quantiles for horizon {h}")
+            df_h = df[df["horizon"] == h].drop(columns=["horizon"])
+            if not df_h.empty:
+                df_q = samples_to_quantiles(
+                    df_h,
+                    quantiles=quantiles,
+                    gid_1=gid_1,
+                )
+                df_q["horizon"] = h
+                df_horizons.append(df_q)
+        return pd.concat(df_horizons, ignore_index=True)
 
     # Admin-1 filter
     if gid_1 is not None:
         df = df[df["GID_1"].isin(gid_1)]
 
-    # Group once by region
+    # Group by region and horizon
     results = []
-    for gid2, group in df.groupby("GID_2"):
+    for gid2, group in df.groupby("GID_2", observed=True):
         logging.info(f"Processing region {gid2} for quantiles conversion")
         group = group.sort_values("Date")  # ensure Date order
         dates = group["Date"].unique()
 
         # Map Date -> predictions for vectorized access
-        date_groups = group.groupby("Date")
+        date_groups = group.groupby("Date", observed=True)
 
         # Loop through date positions, skipping boundaries
         for k in range(2, len(dates) - 1):
