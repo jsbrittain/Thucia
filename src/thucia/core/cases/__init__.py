@@ -55,11 +55,6 @@ def aggregate_cases(
     else:
         df = df.copy()  # copy of input DataFrame
 
-    if "Cases" in df.columns:
-        logging.warning(
-            "Input DataFrame already contains a 'Cases' column, skipping aggregation."
-        )
-        return df
     if "Date" not in df.columns:
         raise ValueError("DataFrame must contain a 'Date' column.")
 
@@ -70,7 +65,10 @@ def aggregate_cases(
             )
         df = df[df["Status"].isin(statuses)].copy()
 
-    incoming_case_count = len(df)
+    if "Cases" in df.columns:
+        incoming_case_count = df["Cases"].sum()
+    else:
+        incoming_case_count = len(df)
 
     if not isinstance(df["Date"].dtype, pd.PeriodDtype):
         df["Date"] = pd.to_datetime(df["Date"]).dt.to_period(freq)
@@ -82,7 +80,8 @@ def aggregate_cases(
         group_cols.remove("Status")
 
     # Group and count cases
-    df["Cases"] = 1
+    if "Cases" not in df.columns:
+        df["Cases"] = 1
     grouped = df.groupby(group_cols, as_index=False, observed=False)["Cases"].sum()
     grouped["GID_1"] = grouped["GID_2"].map(gid2_to_gid1)
 

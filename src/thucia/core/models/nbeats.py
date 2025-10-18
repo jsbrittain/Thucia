@@ -1,11 +1,12 @@
 import logging
+from pathlib import Path
 from typing import List
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 from darts.models import NBEATSModel
 from darts.utils.likelihood_models import GaussianLikelihood
+from thucia.core.fs import DataFrame
 
 from .darts import DartsBase
 
@@ -75,28 +76,33 @@ def nbeats(
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
-) -> pd.DataFrame:
+    db_file: str | Path | None = None,
+    train_per_region: bool = True,  # Train a separate model for each region
+) -> DataFrame | pd.DataFrame:
+    """NBEATS forecasting pipeline.
+
+    Returns a Thucia DataFrame if db_file is specified, otherwise a pandas DataFrame.
+    """
     logging.info("Starting NBEATS forecasting pipeline...")
 
-    # float32
-    float_cols = df.select_dtypes(include="float").columns
-    df[float_cols] = df[float_cols].astype(np.float32)
-
+    # Instantiate model
     model = NBEATSSamples(
         df=df,
         case_col=case_col,
         covariate_cols=covariate_cols,
         horizon=horizon,
         num_samples=1000,
+        db_file=db_file,
         train_start_date=train_start_date,
         train_end_date=train_end_date,
     )
 
     # Historical predictions
-    preds_hist = model.historical_predictions(
+    tdf = model.historical_predictions(
         start_date=start_date,
         retrain=retrain,
+        train_per_region=train_per_region,
     )
-    preds = preds_hist
+    logging.info("Completed NBEATS forecasting pipeline.")
 
-    return preds
+    return tdf

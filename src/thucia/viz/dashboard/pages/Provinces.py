@@ -120,6 +120,9 @@ df["Date"] = df["Date"].astype("datetime64[ns]")
 with st.spinner("Analysing datasets..."):
     # Create FacetGrid
     try:
+        # remove unused categories before creating facet plot
+        df["GID_2"] = df["GID_2"].astype(str).astype("category")
+        # Plot
         g = sns.FacetGrid(
             df, col="GID_2", col_wrap=2, height=2.5, aspect=2, sharey=False
         )
@@ -130,7 +133,7 @@ with st.spinner("Analysing datasets..."):
             ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
             ax.xaxis.set_major_locator(mdates.YearLocator(1))
             ax.xaxis.set_tick_params(rotation=45)
-        # Figure legend (on second axis only)
+        # Figure legend
         if len(g.axes.flat) > 0:
             g.axes.flat[0].legend()
 

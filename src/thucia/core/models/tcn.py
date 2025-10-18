@@ -1,11 +1,12 @@
 import logging
+from pathlib import Path
 from typing import List
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 from darts.models import TCNModel
 from darts.utils.likelihood_models import QuantileRegression
+from thucia.core.fs import DataFrame
 
 from .darts import DartsBase
 
@@ -93,45 +94,34 @@ def tcn(
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
-    retrain: bool = True,  # Best performance when True, but slower
-) -> pd.DataFrame:
+    retrain: bool = True,  # Retrain after every step (accurate but slow)
+    db_file: str | Path | None = None,
+    train_per_region: bool = True,  # Train a separate model for each region
+) -> DataFrame | pd.DataFrame:
+    """Temporal Convolutional Network (TCN) forecasting pipeline.
+
+    Returns a Thucia DataFrame if db_file is specified, otherwise a pandas DataFrame.
+    """
     logging.info("Starting TCN forecasting pipeline...")
 
-    # convert to float32
-    float_cols = df.select_dtypes(include="float").columns
-    df[float_cols] = df[float_cols].astype(np.float32)
+    # Instantiate model
+    model = TcnSamples(
+        df=df,
+        case_col=case_col,
+        covariate_cols=covariate_cols,
+        horizon=horizon,
+        num_samples=1000,
+        db_file=db_file,
+        train_start_date=train_start_date,
+        train_end_date=train_end_date,
+    )
 
-    preds_hist = []
-    gid_list = df["GID_2"].unique().tolist()
-    for ix, gid in enumerate(gid_list):
-        logging.info(f"Processing GID_2: {gid}...")
-        tic = pd.Timestamp.now()
+    # Historical predictions
+    tdf = model.historical_predictions(
+        start_date=start_date,
+        retrain=retrain,
+        train_per_region=train_per_region,
+    )
+    logging.info("Completed TCN forecasting pipeline.")
 
-        df_gid = df[df["GID_2"] == gid].copy()
-
-        model = TcnSamples(
-            df=df_gid,
-            case_col=case_col,
-            covariate_cols=covariate_cols,
-            horizon=horizon,
-            num_samples=1000,
-            train_start_date=train_start_date,
-            train_end_date=train_end_date,
-        )
-
-        # Historical predictions
-        preds_hist.append(
-            model.historical_predictions(
-                start_date=start_date,
-                retrain=retrain,
-            )
-        )
-
-        toc = pd.Timestamp.now()
-        logging.info(f"Completed GID_2: {gid} in {toc - tic}.")
-
-        estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
-        logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
-
-    preds = pd.concat(preds_hist).reset_index(drop=True)
-    return preds
+    return tdf

@@ -26,9 +26,13 @@ def lookup_gid1(iso3, admin1_names: list[str] | None = None):
     Returns:
     list[str]: List of GID_1 codes corresponding to the provided names.
     """
-    logging.info(
-        f"Looking up GID_1 codes for Admin-1 names: {admin1_names} in {iso3}..."
-    )
+    if admin1_names:
+        logging.info(
+            f"Looking up GID_1 codes for Admin-1 names: {admin1_names} in {iso3}..."
+        )
+    else:
+        logging.info("Admin-1 filter not specified, retrieving all GID_1 codes...")
+
     gdf = get_admin2_list(iso3)
     if admin1_names:
         gdf = gdf[gdf["NAME_1"].isin(admin1_names)]

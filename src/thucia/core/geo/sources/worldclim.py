@@ -228,7 +228,9 @@ class WorldClim(SourceBase):
                 stats = [stats]
 
             # Read and merge mean climate data per region for each Date
-            for date in unique_gid2_dates["Date"].unique():
+            n_unique_gid2_dates = unique_gid2_dates["Date"].nunique()
+            for ix, date in enumerate(unique_gid2_dates["Date"].unique()):
+                tic = pd.Timestamp.now()
                 date_df = unique_gid2_dates[unique_gid2_dates["Date"] == date]
                 gid_2s = date_df["GID_2"].tolist()
                 logging.info(
@@ -253,6 +255,14 @@ class WorldClim(SourceBase):
 
                 stat["Date"] = pd.to_datetime(stat["Date"])  # ensure datetime
                 stats.append(stat)
+
+                # Estimate time remaining
+                toc = pd.Timestamp.now()
+                estimated_time_remaining = (toc - tic) * (n_unique_gid2_dates - ix - 1)
+                logging.info(
+                    f"Took {toc - tic}, "
+                    f"estimated time remaining: {estimated_time_remaining}."
+                )
 
             stats = pd.concat(stats, ignore_index=True)
             col_map = {f"{measure}": f"{metric}_{measure}" for measure in measures}

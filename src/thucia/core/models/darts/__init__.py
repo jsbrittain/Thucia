@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import List
 from typing import Optional
 
@@ -7,6 +8,7 @@ import pandas as pd
 import torch
 from darts import TimeSeries
 from thucia.core.cases import align_date_types
+from thucia.core.fs import DataFrame
 from thucia.core.models.utils import sample_to_quantiles_vec
 
 torch.set_float32_matmul_precision(
@@ -24,6 +26,7 @@ class DartsBase:
         covariate_cols: Optional[List[str]] = None,
         horizon=1,
         num_samples=1000,
+        db_file: str | Path | None = None,
         train_start_date=None,
         train_end_date=None,
     ):
@@ -34,6 +37,12 @@ class DartsBase:
         self.covariate_cols = covariate_cols or []
         self.horizon = horizon
         self.num_samples = num_samples
+        self.db_file = Path(db_file) if db_file else None
+
+        if self.db_file:
+            logging.debug(f"Darts model initialized with file store: {self.db_file}")
+        else:
+            logging.debug("Darts model initialized without file store.")
 
         self.quantiles = [
             0.01,
@@ -138,17 +147,76 @@ class DartsBase:
 
     def historical_predictions(
         self,
+        *,
+        train_per_region: bool = False,
         retrain: bool = True,  # only turn off for faster testing
-        start_date: Optional[pd.Timestamp] = None,
+        start_date: pd.Timestamp | None = None,
+    ) -> DataFrame | pd.DataFrame:
+        """
+        Pre-fits on all regions, then generates historical forecasts for each region
+        separately.
+        """
+        # Training and forecasting loop
+        if train_per_region:
+            # Output (Thucia DataFrame if db_file specified, pd.DataFrame otherwise)
+            tdf = (
+                DataFrame(db_file=Path(self.db_file), new_file=True)
+                if self.db_file
+                else []
+            )
+            gid_list = self.df["GID_2"].unique().tolist()
+            for ix, gid in enumerate(gid_list):
+                logging.info(f"Processing GID_2: {gid}...")
+                tic = pd.Timestamp.now()
+                df_gid = self.df[self.df["GID_2"] == gid].copy()
+
+                # predictions are always pd.DataFrame
+                tdf.append(
+                    self._historical_predictions_onepass(
+                        df=df_gid,
+                        retrain=retrain,
+                        start_date=start_date,
+                    )
+                )
+
+                # Estimate time remaining
+                toc = pd.Timestamp.now()
+                logging.info(f"Completed GID_2: {gid} in {toc - tic}.")
+                estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
+                logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
+
+            if isinstance(tdf, pd.DataFrame):
+                tdf = pd.concat(tdf).reset_index()
+
+            return tdf
+        else:
+            return self._historical_predictions_onepass(
+                retrain=retrain,
+                start_date=start_date,
+            )
+
+    def _historical_predictions_onepass(
+        self,
+        *,
+        df: pd.DataFrame | None = None,
+        retrain: bool = True,  # only turn off for faster testing
+        start_date: pd.Timestamp | None = None,
     ) -> pd.DataFrame:
-        df = self.df
+        """
+        Pre-fits on all regions, then generates historical forecasts for each region
+        separately.
+        """
+        df = df if df is not None else self.df  # use provided df, fallback to self.df
 
         if start_date is None:
             start_date = df["Date"].min()
 
+        # Convert floats to 32-bit precision
+        float_cols = df.select_dtypes(include="float").columns
+        df[float_cols] = df[float_cols].astype(np.float32)
+
         # Model pre-fit
         target_gids = df["GID_2"].unique()
-        logging.info("Pre-fit (where needed)")
         self.pre_fit(target_gids=target_gids)
 
         # Now include future data for forecasting, ensuring the same GID mapping
@@ -228,6 +296,13 @@ class DartsBase:
             on=["Date", "GID_2"],
             how="left",
         )
+        # Restore GID categories
+        preds["GID_2"] = pd.Categorical(
+            preds["GID_2"],
+            categories=df["GID_2"].cat.categories,
+            ordered=df["GID_2"].cat.ordered,
+        )
+        # Return Cases to original scale
         preds["Cases"] = np.expm1(preds["Log_Cases"])
 
         return preds

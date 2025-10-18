@@ -1,10 +1,11 @@
 import logging
+from pathlib import Path
 from typing import List
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 from darts import TimeSeries
+from thucia.core.fs import DataFrame
 from timesfm import TimesFm
 from timesfm import TimesFmCheckpoint
 from timesfm import TimesFmHparams
@@ -42,8 +43,9 @@ class TimesFMSamples(DartsBase):
         for tix, t in enumerate(dates):  # forecast target date at horizon
             if t < start_date:
                 continue
+            t_display = pd.Period(t, freq=self.df["Date"].iloc[0].freq)
 
-            logging.info(f"Forecasting for date: {t}...")
+            logging.info(f"Forecasting for date: {t_display}...")
             if tix < self.horizon:
                 logging.info("Not enough data to forecast, skipping...")
                 continue
@@ -84,7 +86,7 @@ class TimesFMSamples(DartsBase):
 
 # -------- pipeline helper --------
 def timesfm(
-    df: pd.DataFrame,
+    df: DataFrame | pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
@@ -92,42 +94,36 @@ def timesfm(
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
-) -> pd.DataFrame:
+    db_file: str | Path | None = None,
+    *args,
+    **kwargs,
+) -> DataFrame | pd.DataFrame:
+    """TimesFM forecasting pipeline.
+
+    Returns a Thucia DataFrame if db_file is specified, otherwise a pandas DataFrame.
+    """
     logging.info("Starting TimesFM forecasting pipeline...")
 
-    # float32
-    float_cols = df.select_dtypes(include="float").columns
-    df[float_cols] = df[float_cols].astype(np.float32)
+    if args:
+        logging.warning(f"Unused positional arguments: {args}")
+    if kwargs:
+        logging.warning(f"Unused keyword arguments: {kwargs}")
 
-    preds_hist = []
-    gid_list = df["GID_2"].unique().tolist()
-    for ix, gid in enumerate(gid_list):
-        logging.info(f"Processing GID_2: {gid}...")
-        tic = pd.Timestamp.now()
+    # Instantiate model
+    model = TimesFMSamples(
+        df=df,
+        case_col=case_col,
+        covariate_cols=covariate_cols,
+        horizon=horizon,
+        num_samples=1000,
+        db_file=db_file,
+    )
 
-        df_gid = df[df["GID_2"] == gid].copy()
+    # Historical predictions
+    tdf = model.historical_predictions(
+        start_date=start_date,
+        retrain=retrain,
+    )
+    logging.info("Completed TimesFM forecasting pipeline.")
 
-        model = TimesFMSamples(
-            df=df_gid,
-            case_col=case_col,
-            covariate_cols=covariate_cols,
-            horizon=horizon,
-            num_samples=1000,
-        )
-
-        # Historical predictions
-        preds_hist.append(
-            model.historical_predictions(
-                start_date=start_date,
-                retrain=retrain,
-            )
-        )
-
-        toc = pd.Timestamp.now()
-        logging.info(f"Completed GID_2: {gid} in {toc - tic}.")
-
-        estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
-        logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
-
-    preds = pd.concat(preds_hist).reset_index(drop=True)
-    return preds
+    return tdf
