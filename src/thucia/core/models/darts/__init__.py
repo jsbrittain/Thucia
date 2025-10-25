@@ -184,6 +184,7 @@ class DartsBase:
             logging.info(f"Completed {geo_col}: {gid} in {toc - tic}.")
             estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
             logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
+        return tdf
 
     def historical_predictions(
         self,
@@ -208,13 +209,13 @@ class DartsBase:
             )
 
         elif model_admin_level == 1:  # Train per state (GID_1)
-            self._historical_predictions_per_region(
+            tdf = self._historical_predictions_per_region(
                 retrain=retrain,
                 start_date=start_date,
                 geo_col="GID_1",
             )
         elif model_admin_level == 2:  # Train per municipality (GID_2)
-            self._historical_predictions_per_region(
+            tdf = self._historical_predictions_per_region(
                 retrain=retrain,
                 start_date=start_date,
                 geo_col="GID_2",
