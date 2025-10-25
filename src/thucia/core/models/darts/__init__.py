@@ -25,7 +25,7 @@ class DartsBase:
         geo_col="GID_2",
         covariate_cols: Optional[List[str]] = None,
         horizon=1,
-        num_samples=1000,
+        num_samples: int | None = None,
         db_file: str | Path | None = None,
         train_start_date=None,
         train_end_date=None,
@@ -36,8 +36,11 @@ class DartsBase:
         self.geo_col = geo_col
         self.covariate_cols = covariate_cols or []
         self.horizon = horizon
-        self.num_samples = num_samples
+        self.num_samples = num_samples or 1000
         self.db_file = Path(db_file) if db_file else None
+
+        if "GID_2_codes" not in self.covariate_cols:
+            self.covariate_cols.append("GID_2_codes")  # added in get_cases
 
         if self.db_file:
             logging.debug(f"Darts model initialized with file store: {self.db_file}")
@@ -109,6 +112,12 @@ class DartsBase:
         if end_date is None:
             end_date = df[self.date_col].max()
 
+        # Add GID2 as numeric code
+        if "GID_2_codes" not in df.columns:
+            df["GID_2_codes"] = df["GID_2"].cat.codes
+        if "GID_2_codes" not in self.covariate_cols:
+            self.covariate_cols.append("GID_2_codes")
+
         start_date = align_date_types(start_date, df[self.date_col])
         end_date = align_date_types(end_date, df[self.date_col])
 
@@ -145,10 +154,41 @@ class DartsBase:
 
         return target_list, covar_list, target_gids
 
+    def _historical_predictions_per_region(
+        self,
+        *,
+        retrain: bool = True,  # only turn off for faster testing
+        start_date: pd.Timestamp | None = None,
+        geo_col: str = "GID_1",
+    ) -> DataFrame | pd.DataFrame:
+        tdf = (
+            DataFrame(db_file=Path(self.db_file), new_file=True) if self.db_file else []
+        )
+        gid_list = self.df[geo_col].unique().tolist()
+        for ix, gid in enumerate(gid_list):
+            logging.info(f"Processing {geo_col}: {gid}...")
+            tic = pd.Timestamp.now()
+            df_gid = self.df[self.df[geo_col] == gid].copy()
+
+            # predictions are always pd.DataFrame
+            tdf.append(
+                self._historical_predictions_onepass(
+                    df=df_gid,
+                    retrain=retrain,
+                    start_date=start_date,
+                )
+            )
+
+            # Estimate time remaining
+            toc = pd.Timestamp.now()
+            logging.info(f"Completed {geo_col}: {gid} in {toc - tic}.")
+            estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
+            logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
+
     def historical_predictions(
         self,
         *,
-        train_per_region: bool = False,
+        model_admin_level: int | None = None,  # 0=country, 1=state, 2=municipality
         retrain: bool = True,  # only turn off for faster testing
         start_date: pd.Timestamp | None = None,
     ) -> DataFrame | pd.DataFrame:
@@ -156,44 +196,35 @@ class DartsBase:
         Pre-fits on all regions, then generates historical forecasts for each region
         separately.
         """
-        # Training and forecasting loop
-        if train_per_region:
-            # Output (Thucia DataFrame if db_file specified, pd.DataFrame otherwise)
-            tdf = (
-                DataFrame(db_file=Path(self.db_file), new_file=True)
-                if self.db_file
-                else []
-            )
-            gid_list = self.df["GID_2"].unique().tolist()
-            for ix, gid in enumerate(gid_list):
-                logging.info(f"Processing GID_2: {gid}...")
-                tic = pd.Timestamp.now()
-                df_gid = self.df[self.df["GID_2"] == gid].copy()
+        model_admin_level = model_admin_level if model_admin_level is not None else 0
+        logging.info(
+            f"Generating historical predictions at admin level {model_admin_level}."
+        )
 
-                # predictions are always pd.DataFrame
-                tdf.append(
-                    self._historical_predictions_onepass(
-                        df=df_gid,
-                        retrain=retrain,
-                        start_date=start_date,
-                    )
-                )
-
-                # Estimate time remaining
-                toc = pd.Timestamp.now()
-                logging.info(f"Completed GID_2: {gid} in {toc - tic}.")
-                estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
-                logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
-
-            if isinstance(tdf, pd.DataFrame):
-                tdf = pd.concat(tdf).reset_index()
-
-            return tdf
-        else:
-            return self._historical_predictions_onepass(
+        if model_admin_level == 0:  # Train on entire country
+            tdf = self._historical_predictions_onepass(
                 retrain=retrain,
                 start_date=start_date,
             )
+
+        elif model_admin_level == 1:  # Train per state (GID_1)
+            self._historical_predictions_per_region(
+                retrain=retrain,
+                start_date=start_date,
+                geo_col="GID_1",
+            )
+        elif model_admin_level == 2:  # Train per municipality (GID_2)
+            self._historical_predictions_per_region(
+                retrain=retrain,
+                start_date=start_date,
+                geo_col="GID_2",
+            )
+        else:
+            raise ValueError(
+                f"model_admin_level must be 0, 1, or 2 (got '{model_admin_level}')."
+            )
+
+        return tdf
 
     def _historical_predictions_onepass(
         self,

@@ -23,6 +23,7 @@ def cases_per_month(*args, **kwargs) -> pd.DataFrame:
 def aggregate_cases(
     df: DataFrame | pd.DataFrame,
     statuses: list[str] | None = None,
+    cases_col: str = "Cases",
     fill_column: str | None = "GID_2",
     freq: str = "M",
 ) -> pd.DataFrame:
@@ -35,6 +36,7 @@ def aggregate_cases(
         DataFrame with a 'Date' column and optionally a 'Status' column.
     statuses : list[str], optional
         Subset of Status values to include.
+    cases_col : str, optional
     fill_column : str, optional
         If provided, will fill missing Dates, grouped by 'fill_column'.
     freq: str
@@ -65,8 +67,8 @@ def aggregate_cases(
             )
         df = df[df["Status"].isin(statuses)].copy()
 
-    if "Cases" in df.columns:
-        incoming_case_count = df["Cases"].sum()
+    if cases_col in df.columns:
+        incoming_case_count = df[cases_col].sum()
     else:
         incoming_case_count = len(df)
 
@@ -80,9 +82,9 @@ def aggregate_cases(
         group_cols.remove("Status")
 
     # Group and count cases
-    if "Cases" not in df.columns:
-        df["Cases"] = 1
-    grouped = df.groupby(group_cols, as_index=False, observed=False)["Cases"].sum()
+    if cases_col not in df.columns:
+        df[cases_col] = 1
+    grouped = df.groupby(group_cols, as_index=False, observed=False)[cases_col].sum()
     grouped["GID_1"] = grouped["GID_2"].map(gid2_to_gid1)
 
     if fill_column is None:
@@ -110,12 +112,14 @@ def aggregate_cases(
     # Merge grouped counts onto full grid
     result = pd.merge(full_grid, grouped, on=[fill_column, "Date"], how="left")
 
-    # Fill Cases with zeros where missing
-    result["Cases"] = result["Cases"].fillna(0).astype(int)
+    # Fill cases_col with zeros where missing
+    result[cases_col] = result[cases_col].fillna(0).astype(int)
 
-    # Identify descriptive columns to fill (all except fill_column, Date, Cases, and Status)
+    # Identify descriptive columns to fill (all except fill_column, Date, cases_col, and Status)
     descriptive_cols = [
-        col for col in df.columns if col not in [fill_column, "Date", "Cases", "Status"]
+        col
+        for col in df.columns
+        if col not in [fill_column, "Date", cases_col, "Status"]
     ]
 
     # For each descriptive column, build a mapping from fill_column to the unique value,
@@ -131,7 +135,7 @@ def aggregate_cases(
     result = result.sort_values(by=["Date", fill_column]).reset_index(drop=True)
 
     # Check case counts match
-    outgoing_case_count = result["Cases"].sum()
+    outgoing_case_count = result[cases_col].sum()
     if incoming_case_count != outgoing_case_count:
         logging.warning(
             f"Case count mismatch: incoming {incoming_case_count}, outgoing {outgoing_case_count}"
