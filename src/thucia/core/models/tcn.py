@@ -101,6 +101,7 @@ def tcn(
     db_file: str | Path | None = None,
     model_admin_level: int = 0,  # Admin level for model training
     num_samples: int | None = None,
+    multivariate: bool = True,
 ) -> DataFrame | pd.DataFrame:
     """Temporal Convolutional Network (TCN) forecasting pipeline.
 
@@ -118,6 +119,7 @@ def tcn(
         db_file=db_file,
         train_start_date=train_start_date,
         train_end_date=train_end_date,
+        multivariate=multivariate,
     )
 
     # Historical predictions

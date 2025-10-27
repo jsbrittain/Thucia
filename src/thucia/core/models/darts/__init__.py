@@ -29,6 +29,7 @@ class DartsBase:
         db_file: str | Path | None = None,
         train_start_date=None,
         train_end_date=None,
+        multivariate: bool = False,
     ):
         self.df = df
         self.case_col = case_col
@@ -38,6 +39,7 @@ class DartsBase:
         self.horizon = horizon
         self.num_samples = num_samples or 1000
         self.db_file = Path(db_file) if db_file else None
+        self.multivariate = multivariate
 
         if "GID_2_codes" not in self.covariate_cols:
             self.covariate_cols.append("GID_2_codes")  # added in get_cases
@@ -227,6 +229,56 @@ class DartsBase:
 
         return tdf
 
+    def _extract_horizons(
+        self,
+        bt,
+        gid,
+    ):
+        # process horizons separately
+        rows = []
+        for h in range(self.horizon):
+            vals = np.concat([TimeSeries.all_values(t)[h, :, :] for t in bt])
+            dates = np.array([t.time_index[h] for t in bt])
+
+            out = pd.DataFrame(vals)
+            out["Date"] = dates
+            out = out.melt(
+                id_vars="Date",
+                var_name="sample",
+                value_name="prediction",
+            )
+            out["sample"] = out["sample"].astype(int)
+            out["GID_2"] = gid
+
+            if len(out) > 1:
+                # samples to quantiles
+                out = (
+                    pd.concat(
+                        {
+                            k: sample_to_quantiles_vec(
+                                np.expm1(g["prediction"]).clip(
+                                    lower=0
+                                ),  # transform before quantiles
+                                self.quantiles,
+                            )
+                            for k, g in out.groupby(["Date", "GID_2"])
+                        },
+                        names=["Date", "GID_2"],
+                    )
+                    .reset_index()
+                    .rename(columns={"value": "prediction"})
+                    .drop(columns=["level_2"])
+                )
+                out["horizon"] = h + 1  # 1-based horizon
+            else:
+                out["quantile"] = 0.5
+                out["horizon"] = h + 1  # 1-based horizon
+                out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
+                out = out.drop(columns=["sample"])
+
+            rows.append(out)
+        return rows
+
     def _historical_predictions_onepass(
         self,
         *,
@@ -254,67 +306,49 @@ class DartsBase:
         # Now include future data for forecasting, ensuring the same GID mapping
         target_list, covar_list, _ = self.get_cases(target_gids=target_gids)
 
-        rows = []
-        for ts, cov, gid in zip(target_list, covar_list, target_gids):
-            logging.info(f"Forecasting for GID_2 {gid}")
+        if self.multivariate:
+            logging.info(f"Forecasting for {target_gids} (multivariate)")
             tic = pd.Timestamp.now()
             start_date_timestamp = start_date.to_timestamp(how="end")
             try:
                 bt = self.historical_forecasts(
-                    ts, cov, start_date=start_date_timestamp, retrain=retrain
+                    target_list,
+                    covar_list,
+                    start_date=start_date_timestamp,
+                    retrain=retrain,
                 )
-                # bt = [time]series[horizon][1][samples]
+                # for multivariate, bt is a list per time-series:
+                # bt = [gid][time]series[horizon][1][samples]
             except ValueError as e:
                 logging.warning(
-                    f"Failed to fit for GID_2 {gid} (msg: {e}), skipping..."
+                    f"Failed to fit for GID_2 {target_gids} (multivariate) "
+                    f"(msg: {e}), skipping..."
                 )
-                continue
-
-            # process horizons separately
-            for h in range(self.horizon):
-                vals = np.concat([TimeSeries.all_values(t)[h, :, :] for t in bt])
-                dates = np.array([t.time_index[h] for t in bt])
-
-                out = pd.DataFrame(vals)
-                out["Date"] = dates
-                out = out.melt(
-                    id_vars="Date",
-                    var_name="sample",
-                    value_name="prediction",
-                )
-                out["sample"] = out["sample"].astype(int)
-                out["GID_2"] = gid
-
-                if len(out) > 1:
-                    # samples to quantiles
-                    out = (
-                        pd.concat(
-                            {
-                                k: sample_to_quantiles_vec(
-                                    np.expm1(g["prediction"]).clip(
-                                        lower=0
-                                    ),  # transform before quantiles
-                                    self.quantiles,
-                                )
-                                for k, g in out.groupby(["Date", "GID_2"])
-                            },
-                            names=["Date", "GID_2"],
-                        )
-                        .reset_index()
-                        .rename(columns={"value": "prediction"})
-                        .drop(columns=["level_2"])
-                    )
-                    out["horizon"] = h + 1  # 1-based horizon
-                else:
-                    out["quantile"] = 0.5
-                    out["horizon"] = h + 1  # 1-based horizon
-                    out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                    out = out.drop(columns=["sample"])
-
-                rows.append(out)
-
+            rows = []
+            for ix, gid in enumerate(target_gids):
+                rows.extend(self._extract_horizons(bt[ix], gid))
             toc = pd.Timestamp.now()
-            logging.info(f"Region {gid} done in {toc - tic}")
+            logging.info(f"Regions {target_gids} done in {toc - tic}")
+        else:
+            rows = []
+            for ts, cov, gid in zip(target_list, covar_list, target_gids):
+                logging.info(f"Forecasting for GID_2 {gid}")
+                tic = pd.Timestamp.now()
+                start_date_timestamp = start_date.to_timestamp(how="end")
+                try:
+                    bt = self.historical_forecasts(
+                        ts, cov, start_date=start_date_timestamp, retrain=retrain
+                    )
+                    # for univariate, bt relates to a single time-series:
+                    # bt = [time]series[horizon][1][samples]
+                except ValueError as e:
+                    logging.warning(
+                        f"Failed to fit for GID_2 {gid} (msg: {e}), skipping..."
+                    )
+                    continue
+                rows.extend(self._extract_horizons(bt, gid))
+                toc = pd.Timestamp.now()
+                logging.info(f"Region {gid} done in {toc - tic}")
 
         preds = pd.concat(rows, ignore_index=True)
 
