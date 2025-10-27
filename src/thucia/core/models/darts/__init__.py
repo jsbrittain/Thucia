@@ -83,9 +83,33 @@ class DartsBase:
         self.train_start_date = train_start_date
         self.train_end_date = train_end_date
 
+        # Skip training / forecasting in GID_2s with all zeros in training period
+        self.identify_noincidence_regions()
+
         # Parameters and functionality provided by subclasses
         self.sampling_method = None
         self.model = self.build_model()
+
+    def identify_noincidence_regions(self):
+        # Reject GID_2 with all zeros in training period
+        def has_nonzero_cases(gdf):
+            gdf_train = gdf[
+                (gdf[self.date_col] >= self.train_start_date)
+                & (gdf[self.date_col] <= self.train_end_date)
+            ]
+            return (gdf_train[self.case_col] > 0).any()
+
+        self.valid_gids = (
+            self.df.groupby(self.geo_col)
+            .filter(has_nonzero_cases)[self.geo_col]
+            .unique()
+        )
+        self.rejected_gids = set(self.df[self.geo_col].unique()) - set(self.valid_gids)
+        if self.rejected_gids:
+            logging.info(
+                f"Excluding {len(self.rejected_gids)} GID_2s with no incidence in "
+                "training period."
+            )
 
     # Child classes must override this method to provide concrete functionality
     def build_model(self):
@@ -116,7 +140,7 @@ class DartsBase:
 
         # Add GID2 as numeric code
         if "GID_2_codes" not in df.columns:
-            df["GID_2_codes"] = df["GID_2"].cat.codes
+            df.loc[:, "GID_2_codes"] = df["GID_2"].cat.codes
         if "GID_2_codes" not in self.covariate_cols:
             self.covariate_cols.append("GID_2_codes")
 
@@ -300,14 +324,15 @@ class DartsBase:
         df[float_cols] = df[float_cols].astype(np.float32)
 
         # Model pre-fit
-        target_gids = df["GID_2"].unique()
+        all_target_gids = df["GID_2"].unique()
+        target_gids = [gid for gid in all_target_gids if gid not in self.rejected_gids]
         self.pre_fit(target_gids=target_gids)
 
         # Now include future data for forecasting, ensuring the same GID mapping
         target_list, covar_list, _ = self.get_cases(target_gids=target_gids)
 
         if self.multivariate:
-            logging.info(f"Forecasting for {target_gids} (multivariate)")
+            logging.info(f"Forecasting for {len(target_gids)} regions (multivariate)")
             tic = pd.Timestamp.now()
             start_date_timestamp = start_date.to_timestamp(how="end")
             try:
@@ -349,6 +374,29 @@ class DartsBase:
                 rows.extend(self._extract_horizons(bt, gid))
                 toc = pd.Timestamp.now()
                 logging.info(f"Region {gid} done in {toc - tic}")
+
+        # Substitute back all-zero regions
+        for gid in set(all_target_gids) - set(target_gids):
+            logging.info(f"Adding all-zero predictions for GID_2 {gid}...")
+            if not rows:
+                raise ValueError(
+                    "No predictions were made; cannot add all-zero regions."
+                )
+            if rows[-1].empty:
+                raise ValueError(
+                    "Last prediction DataFrame is empty; cannot add all-zero regions."
+                )
+            if rows[-1]["horizon"].nunique() > 1:
+                raise ValueError(
+                    "Predictions have multiple horizons; cannot add all-zero regions."
+                )
+            # Add rows for rejected GID_2s with all-zero cases
+            for h in range(self.horizon):
+                out = rows[-1].copy()
+                out["GID_2"] = gid
+                out["prediction"] = 0
+                out["horizon"] = h + 1
+                rows.append(out)
 
         preds = pd.concat(rows, ignore_index=True)
 

@@ -93,6 +93,7 @@ def tft(
     db_file: str | Path | None = None,
     model_admin_level: bool = True,  # Train a separate model for each region
     num_samples: int | None = None,
+    multivariate: bool = True,
 ) -> DataFrame | pd.DataFrame:
     """Temporal Fusion Transformer (TFT) forecasting pipeline.
 
@@ -111,6 +112,7 @@ def tft(
         db_file=db_file,
         train_start_date=train_start_date,
         train_end_date=train_end_date,
+        multivariate=multivariate,
     )
 
     # Historical predictions

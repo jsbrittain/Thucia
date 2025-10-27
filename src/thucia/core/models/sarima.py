@@ -51,6 +51,7 @@ def sarima(
     covariate_cols: Optional[List[str]] = None,
     db_file: str | Path | None = None,
     num_samples: int | None = None,
+    multivariate: bool = False,
     *args,
     **kwargs,
 ) -> DataFrame | pd.DataFrame:
@@ -65,6 +66,9 @@ def sarima(
     if kwargs:
         logging.warning(f"Keyword arguments {kwargs} are ignored in sarima().")
 
+    if multivariate:
+        raise ValueError("SARIMA does not support multivariate forecasting.")
+
     # Instantiate model
     model = SarimaQuantiles(
         df=df,
@@ -73,6 +77,7 @@ def sarima(
         horizon=horizon,
         num_samples=num_samples,
         db_file=db_file,
+        multivariate=False,
     )
 
     # Historical predictions
