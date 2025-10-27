@@ -183,13 +183,11 @@ class DartsBase:
     def _historical_predictions_per_region(
         self,
         *,
+        tdf_out: DataFrame,
         retrain: bool = True,  # only turn off for faster testing
         start_date: pd.Timestamp | None = None,
         geo_col: str = "GID_1",
     ) -> DataFrame | pd.DataFrame:
-        tdf = (
-            DataFrame(db_file=Path(self.db_file), new_file=True) if self.db_file else []
-        )
         gid_list = self.df[geo_col].unique().tolist()
         for ix, gid in enumerate(gid_list):
             logging.info(f"Processing {geo_col}: {gid}...")
@@ -197,12 +195,11 @@ class DartsBase:
             df_gid = self.df[self.df[geo_col] == gid].copy()
 
             # predictions are always pd.DataFrame
-            tdf.append(
-                self._historical_predictions_onepass(
-                    df=df_gid,
-                    retrain=retrain,
-                    start_date=start_date,
-                )
+            self._historical_predictions_onepass(
+                df=df_gid,
+                tdf_out=tdf_out,
+                retrain=retrain,
+                start_date=start_date,
             )
 
             # Estimate time remaining
@@ -210,7 +207,7 @@ class DartsBase:
             logging.info(f"Completed {geo_col}: {gid} in {toc - tic}.")
             estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
             logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
-        return tdf
+        return tdf_out
 
     def historical_predictions(
         self,
@@ -228,20 +225,27 @@ class DartsBase:
             f"Generating historical predictions at admin level {model_admin_level}."
         )
 
+        tdf = (
+            DataFrame(db_file=Path(self.db_file), new_file=True) if self.db_file else []
+        )
+
         if model_admin_level == 0:  # Train on entire country
             tdf = self._historical_predictions_onepass(
+                tdf_out=tdf,
                 retrain=retrain,
                 start_date=start_date,
             )
 
         elif model_admin_level == 1:  # Train per state (GID_1)
             tdf = self._historical_predictions_per_region(
+                tdf_out=tdf,
                 retrain=retrain,
                 start_date=start_date,
                 geo_col="GID_1",
             )
         elif model_admin_level == 2:  # Train per municipality (GID_2)
             tdf = self._historical_predictions_per_region(
+                tdf_out=tdf,
                 retrain=retrain,
                 start_date=start_date,
                 geo_col="GID_2",
@@ -303,10 +307,36 @@ class DartsBase:
             rows.append(out)
         return rows
 
+    def _merge_cases(
+        self,
+        df: pd.DataFrame,
+        preds: pd.DataFrame,
+    ) -> pd.DataFrame:
+        # Ensure Date is in original format
+        freq = df["Date"].dtype.freq.freqstr[0]
+        preds["Date"] = preds["Date"].dt.to_period(freq)
+
+        # Merge Cases back in to preds
+        preds = preds.merge(
+            df[["Date", "GID_2", "Log_Cases"]],
+            on=["Date", "GID_2"],
+            how="left",
+        )
+        # Restore GID categories
+        preds["GID_2"] = pd.Categorical(
+            preds["GID_2"],
+            categories=df["GID_2"].cat.categories,
+            ordered=df["GID_2"].cat.ordered,
+        )
+        # Return Cases to original scale
+        preds["Cases"] = np.expm1(preds["Log_Cases"])
+        return preds
+
     def _historical_predictions_onepass(
         self,
         *,
         df: pd.DataFrame | None = None,
+        tdf_out: DataFrame,
         retrain: bool = True,  # only turn off for faster testing
         start_date: pd.Timestamp | None = None,
     ) -> pd.DataFrame:
@@ -351,7 +381,14 @@ class DartsBase:
                 )
             rows = []
             for ix, gid in enumerate(target_gids):
-                rows.extend(self._extract_horizons(bt[ix], gid))
+                rows = self._merge_cases(
+                    df,
+                    pd.concat(
+                        self._extract_horizons(bt[ix], gid),
+                        ignore_index=True,
+                    ),
+                )
+                tdf_out.append(rows)
             toc = pd.Timestamp.now()
             logging.info(f"Regions {target_gids} done in {toc - tic}")
         else:
@@ -371,52 +408,50 @@ class DartsBase:
                         f"Failed to fit for GID_2 {gid} (msg: {e}), skipping..."
                     )
                     continue
-                rows.extend(self._extract_horizons(bt, gid))
+                tdf_out.append(
+                    self._merge_cases(
+                        df,
+                        pd.concat(
+                            self._extract_horizons(bt, gid),
+                            ignore_index=True,
+                        ),
+                    )
+                )
                 toc = pd.Timestamp.now()
                 logging.info(f"Region {gid} done in {toc - tic}")
 
         # Substitute back all-zero regions
+        if self.rejected_gids:
+            dates = df["Date"].unique()
+            dates = dates[dates >= start_date]
+            dates = dates.to_timestamp(how="end")
+            dates = np.sort(dates)
         for gid in set(all_target_gids) - set(target_gids):
             logging.info(f"Adding all-zero predictions for GID_2 {gid}...")
-            if not rows:
-                raise ValueError(
-                    "No predictions were made; cannot add all-zero regions."
-                )
-            if rows[-1].empty:
-                raise ValueError(
-                    "Last prediction DataFrame is empty; cannot add all-zero regions."
-                )
-            if rows[-1]["horizon"].nunique() > 1:
-                raise ValueError(
-                    "Predictions have multiple horizons; cannot add all-zero regions."
-                )
-            # Add rows for rejected GID_2s with all-zero cases
-            for h in range(self.horizon):
-                out = rows[-1].copy()
-                out["GID_2"] = gid
-                out["prediction"] = 0
-                out["horizon"] = h + 1
-                rows.append(out)
+            # Create rows with predictions equal to zero
+            out = pd.DataFrame(
+                [
+                    (d, gid, q, 0, h + 1)
+                    for d in dates
+                    for h in range(self.horizon)
+                    for q in self.quantiles
+                ],
+                columns=["Date", "GID_2", "quantile", "prediction", "horizon"],
+            )
+            # Remove predictions outside forecasting range (to match other regions)
+            for ix, date in enumerate(dates):
+                if ix < self.horizon:
+                    # Remove predictions before horizon available
+                    out = out[~((out["Date"] == date) & (out["horizon"] > ix + 1))]
+                if len(dates) - ix <= self.horizon:
+                    # Remove predictions after data available
+                    out = out[
+                        ~(
+                            (out["Date"] == date)
+                            & (out["horizon"] <= self.horizon - len(dates) + ix)
+                        )
+                    ]
+            # Add to database
+            tdf_out.append(self._merge_cases(df, out))
 
-        preds = pd.concat(rows, ignore_index=True)
-
-        # Ensure Date is in original format
-        freq = df["Date"].dtype.freq.freqstr[0]
-        preds["Date"] = preds["Date"].dt.to_period(freq)
-
-        # Merge Cases back in to preds
-        preds = preds.merge(
-            df[["Date", "GID_2", "Log_Cases"]],
-            on=["Date", "GID_2"],
-            how="left",
-        )
-        # Restore GID categories
-        preds["GID_2"] = pd.Categorical(
-            preds["GID_2"],
-            categories=df["GID_2"].cat.categories,
-            ordered=df["GID_2"].cat.ordered,
-        )
-        # Return Cases to original scale
-        preds["Cases"] = np.expm1(preds["Log_Cases"])
-
-        return preds
+        return tdf_out
