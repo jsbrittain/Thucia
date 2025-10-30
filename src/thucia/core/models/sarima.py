@@ -4,6 +4,7 @@ from typing import List
 from typing import Optional
 
 import pandas as pd
+from darts.models import ARIMA
 from darts.models import AutoARIMA
 from thucia.core.fs import DataFrame
 
@@ -15,17 +16,71 @@ class SarimaQuantiles(DartsBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.sampling_method = "samples"
+        self.sarima_retrain = False
+
+    def set_retrain(self, retrain: bool):
+        self.sarima_retrain = retrain
 
     def build_model(self):
         # No global model
         return None
 
-    def pre_fit(self, **kwargs):
-        # No pre-fitting needed for SARIMA
-        pass
+    def pre_fit(self, target_gids=None, **kwargs):
+        # Only determine model order if not retraining
+        if self.sarima_retrain:
+            return
+        # Determine model structure from historical data
+        self.fixed_order = {}
+        logging.info("SARIMA pre-fitting: determining model orders for each GID...")
+        for ix, target_gid in enumerate(target_gids):
+            tic = pd.Timestamp.now()
+            target_list, covar_list, _ = self.get_cases(
+                future=False,
+                target_gids=[target_gid],
+                start_date=self.train_start_date,
+                end_date=self.train_end_date,
+            )
+            model = AutoARIMA(season_length=12)
+            model.fit(
+                target_list[0],
+                future_covariates=covar_list[0],
+            )
+            p, q, P, Q, s, d, D = model.model.model_["arma"]
+            self.fixed_order[target_gid] = {
+                "p": p,
+                "q": q,
+                "P": P,
+                "Q": Q,
+                "s": s,
+                "d": d,
+                "D": D,
+            }
+            toc = pd.Timestamp.now()
+            logging.info(
+                f"Determined SARIMA order for gid {target_gid}: "
+                f"(p,d,q)=({p},{d},{q}), (P,D,Q,s)=({P},{D},{Q},{s}) "
+                f"in {toc - tic}"
+            )
 
-    def historical_forecasts(self, ts, cov, start_date=None, **kwargs):
-        model = AutoARIMA(season_length=12)
+    def historical_forecasts(self, ts, cov, gid=None, start_date=None, **kwargs):
+        if self.sarima_retrain:
+            model = AutoARIMA(
+                season_length=12,
+            )
+        else:
+            if not gid:
+                raise ValueError("gid must be provided when not retraining SARIMA.")
+            model = ARIMA(
+                p=self.fixed_order[gid]["p"],
+                d=self.fixed_order[gid]["d"],
+                q=self.fixed_order[gid]["q"],
+                seasonal_order=(
+                    self.fixed_order[gid]["P"],
+                    self.fixed_order[gid]["D"],
+                    self.fixed_order[gid]["Q"],
+                    self.fixed_order[gid]["s"],
+                ),
+            )
         bt = model.historical_forecasts(
             series=ts,
             future_covariates=cov,
@@ -49,7 +104,9 @@ def sarima(
     horizon: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
+    retrain: bool = False,  # AutoARIMA at every step
     db_file: str | Path | None = None,
+    model_admin_level: int = 2,  # GID 2 level
     num_samples: int | None = None,
     multivariate: bool = False,
     *args,
@@ -67,7 +124,7 @@ def sarima(
         logging.warning(f"Keyword arguments {kwargs} are ignored in sarima().")
 
     if multivariate:
-        raise ValueError("SARIMA does not support multivariate forecasting.")
+        logging.warning("SARIMA does not support multivariate forecasting.")
 
     # Instantiate model
     model = SarimaQuantiles(
@@ -79,10 +136,12 @@ def sarima(
         db_file=db_file,
         multivariate=False,
     )
+    model.set_retrain(retrain)
 
     # Historical predictions
     tdf = model.historical_predictions(
         start_date=start_date,
+        model_admin_level=model_admin_level,
     )
     logging.info("Completed SARIMA forecasting pipeline.")
 

@@ -400,7 +400,11 @@ class DartsBase:
                 start_date_timestamp = start_date.to_timestamp(how="end")
                 try:
                     bt = self.historical_forecasts(
-                        ts, cov, start_date=start_date_timestamp, retrain=retrain
+                        ts,
+                        cov,
+                        gid=gid,
+                        start_date=start_date_timestamp,
+                        retrain=retrain,
                     )
                     # for univariate, bt relates to a single time-series:
                     # bt = [time]series[horizon][1][samples]
