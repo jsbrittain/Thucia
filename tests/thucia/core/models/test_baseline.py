@@ -49,7 +49,7 @@ def test_BaselineSamples_symmetric_horizon():
 def test_baseline_symmetric():
     df = pd.DataFrame(
         {
-            "Date": pd.date_range(start="2023-01-01", periods=8, freq="ME"),
+            "Date": pd.period_range(start="2023-01", periods=8, freq="M"),
             "GID_1": ["A", "A", "A", "A", "A", "A", "A", "A"],
             "GID_2": ["X", "X", "X", "X", "X", "X", "X", "X"],
             "Cases": [10, 20, 30, 40, 50, 60, 70, 80],
@@ -61,61 +61,39 @@ def test_baseline_symmetric():
         start_date="2023-01",
         end_date="2023-08",
         gid_1=["A"],
-        samples=3,  # quantiles are sampled without replacement
+        num_samples=3,  # quantiles are sampled without replacement
         # symmetrize should be True by default
     )
     # First three dates should have NA predictions
-    assert (
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-01-31")]["prediction"]
-        .isna()
-        .all()
-    )
-    assert (
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-02-28")]["prediction"]
-        .isna()
-        .all()
-    )
-    assert (
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-03-30")]["prediction"]
-        .isna()
-        .all()
-    )
+    assert df_pred[df_pred["Date"] == pd.Period("2023-01")]["prediction"].isna().all()
+    assert df_pred[df_pred["Date"] == pd.Period("2023-02")]["prediction"].isna().all()
+    assert df_pred[df_pred["Date"] == pd.Period("2023-03")]["prediction"].isna().all()
     # Next two dates should have predictions of Cases(k-1) + [-10, 0, 10] since there
     # is a constant gradient of 10, the baseline is symmetrised e.g. [-10, 10] and we
     # take three quantiles evenly sampled without replacement e.g. [-10, 0, 10]
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-04-30")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-04")]["prediction"].values.tolist()
     ) == {20, 30, 40}
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-05-31")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-05")]["prediction"].values.tolist()
     ) == {30, 40, 50}
     # Last three should be are future forecasts (this requires the model to substitute
     # predictions for observed cases for the one-step ahead prediction, internally)
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-06-30")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-06")]["prediction"].values.tolist()
     ) == {40, 50, 60}
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-07-31")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-07")]["prediction"].values.tolist()
     ) == {40, 50, 60}  # Note that because we symmatrize, the predictions are the same
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-08-31")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-08")]["prediction"].values.tolist()
     ) == {40, 50, 60}  # Note that because we symmatrize, the predictions are the same
 
 
 def test_baseline_asymmetric():
     df = pd.DataFrame(
         {
-            "Date": pd.date_range(start="2023-01-01", periods=8, freq="ME"),
+            "Date": pd.period_range(start="2023-01", periods=8, freq="M"),
             "GID_1": ["A", "A", "A", "A", "A", "A", "A", "A"],
             "GID_2": ["X", "X", "X", "X", "X", "X", "X", "X"],
             "Cases": [10, 20, 30, 40, 50, 60, 70, 80],
@@ -127,52 +105,30 @@ def test_baseline_asymmetric():
         start_date="2023-01",
         end_date="2023-08",
         gid_1=["A"],
-        samples=3,  # quantiles are sampled without replacement
+        num_samples=3,  # quantiles are sampled without replacement
         symmetrize=False,
     )
     # First three dates should have NA predictions
-    assert (
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-01-31")]["prediction"]
-        .isna()
-        .all()
-    )
-    assert (
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-02-28")]["prediction"]
-        .isna()
-        .all()
-    )
-    assert (
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-03-30")]["prediction"]
-        .isna()
-        .all()
-    )
+    assert df_pred[df_pred["Date"] == pd.Period("2023-01")]["prediction"].isna().all()
+    assert df_pred[df_pred["Date"] == pd.Period("2023-02")]["prediction"].isna().all()
+    assert df_pred[df_pred["Date"] == pd.Period("2023-03")]["prediction"].isna().all()
     # Next two dates should have predictions of Cases(k-1) + [-10, 0, 10] since there
     # is a constant gradient of 10, the baseline is symmetrised e.g. [-10, 10] and we
     # take three quantiles evenly sampled without replacement e.g. [-10, 0, 10]
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-04-30")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-04")]["prediction"].values.tolist()
     ) == {40}
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-05-31")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-05")]["prediction"].values.tolist()
     ) == {50}
     # Last three should be are future forecasts (this requires the model to substitute
     # predictions for observed cases for the one-step ahead prediction, internally)
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-06-30")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-06")]["prediction"].values.tolist()
     ) == {60}
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-07-31")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-07")]["prediction"].values.tolist()
     ) == {70}
     assert set(
-        df_pred[df_pred["Date"] == pd.Timestamp("2023-08-31")][
-            "prediction"
-        ].values.tolist()
+        df_pred[df_pred["Date"] == pd.Period("2023-08")]["prediction"].values.tolist()
     ) == {80}

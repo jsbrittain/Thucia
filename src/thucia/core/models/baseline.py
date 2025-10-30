@@ -79,7 +79,7 @@ def baseline(
     multivariate: bool = True,
     # --- Model parameters ---
     symmetrize: bool = True,
-    # --- Unusued parameters (for compatibility with other models) ---
+    # --- Unused parameters (for compatibility with other models) ---
     *args,
     **kwargs,
 ) -> (
