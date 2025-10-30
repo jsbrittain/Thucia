@@ -35,7 +35,7 @@ class SarimaQuantiles(DartsBase):
             retrain=True,
             last_points_only=False,  # this changes the output format
             verbose=False,
-            num_samples=1000,
+            num_samples=self.num_samples,
         )
         return bt
 
@@ -50,6 +50,10 @@ def sarima(
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     db_file: str | Path | None = None,
+    num_samples: int | None = None,
+    multivariate: bool = False,
+    *args,
+    **kwargs,
 ) -> DataFrame | pd.DataFrame:
     """SARIMA forecasting pipeline.
 
@@ -57,14 +61,23 @@ def sarima(
     """
     logging.info("Starting SARIMA forecasting pipeline...")
 
+    if args:
+        logging.warning(f"Positional arguments {args} are ignored in sarima().")
+    if kwargs:
+        logging.warning(f"Keyword arguments {kwargs} are ignored in sarima().")
+
+    if multivariate:
+        raise ValueError("SARIMA does not support multivariate forecasting.")
+
     # Instantiate model
     model = SarimaQuantiles(
         df=df,
         case_col=case_col,
         covariate_cols=covariate_cols,
         horizon=horizon,
-        num_samples=1000,
+        num_samples=num_samples,
         db_file=db_file,
+        multivariate=False,
     )
 
     # Historical predictions

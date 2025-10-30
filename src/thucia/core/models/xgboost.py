@@ -65,7 +65,7 @@ class XGBoostSamples(DartsBase):
             retrain=retrain,
             last_points_only=False,  # this changes the output format
             verbose=False,
-            num_samples=1000,
+            num_samples=self.num_samples,
         )
         return bt
 
@@ -83,7 +83,9 @@ def xgboost(
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
     db_file: str | Path | None = None,
-    train_per_region: bool = True,  # Train a separate model for each region
+    model_admin_level: int | None = None,
+    num_samples: int | None = None,
+    multivariate: bool = True,
 ) -> DataFrame | pd.DataFrame:
     logging.info("Starting XGBoost forecasting pipeline...")
 
@@ -93,17 +95,18 @@ def xgboost(
         case_col=case_col,
         covariate_cols=covariate_cols,
         horizon=horizon,
-        num_samples=1000,
+        num_samples=num_samples,
         db_file=db_file,
         train_start_date=train_start_date,
         train_end_date=train_end_date,
+        multivariate=multivariate,
     )
 
     # Historical predictions
     tdf = model.historical_predictions(
         start_date=start_date,
         retrain=retrain,
-        train_per_region=train_per_region,
+        model_admin_level=model_admin_level,
     )
     logging.info("Completed XGBoost forecasting pipeline.")
 

@@ -1,10 +1,74 @@
 import logging
 import re
+from contextlib import AbstractContextManager
+from contextlib import contextmanager
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import duckdb
 import pandas as pd
+
+
+class DBConnect(AbstractContextManager[duckdb.DuckDBPyConnection]):
+    """
+    Context manager for DuckDB connections.
+    """
+
+    def __init__(self, db_path: str | None = None):
+        self.db_path = ":memory:" if db_path is None else db_path
+        self._persistent_con: duckdb.DuckDBPyConnection | None = None
+
+        if self.db_path == ":memory:":
+            # Persistent connection for in-memory DBs
+            self._persistent_con = duckdb.connect(self.db_path)
+        else:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # `with dbconnect as con:` (read-only)
+    def __enter__(self) -> duckdb.DuckDBPyConnection:
+        if self.db_path == ":memory:":
+            return self._persistent_con
+        self._temp_con = duckdb.connect(self.db_path, read_only=True)
+        return self._temp_con
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        temp = getattr(self, "_temp_con", None)
+        if temp is not None:
+            try:
+                temp.close()
+            except Exception:
+                pass
+            delattr(self, "_temp_con")
+
+    # context manager used by __call__()
+    @contextmanager
+    def connection(self, *args, **kwargs):
+        if self.db_path == ":memory:":
+            yield self._persistent_con
+            return
+
+        con = duckdb.connect(self.db_path, *args, **kwargs)
+        try:
+            yield con
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    # `with dbconnect(read_only=False) as con:`
+    def __call__(self, *args, **kwargs):
+        return self.connection(*args, **kwargs)
+
+    def __del__(self):
+        con = getattr(self, "_persistent_con", None)
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+            self._persistent_con = None
 
 
 class DataFrame:
@@ -42,37 +106,34 @@ class DataFrame:
         # Assign attributes
         self.db_path = db_path
         self.table = table
-        self.con = duckdb.connect(self.db_path)
+        self.dbconnect = DBConnect(self.db_path)
 
         # Initialise with pandas dataframe
         if df is not None:
             self.write_df(df)
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.con:
-            self.con.close()
-
     def __len__(self) -> int:
         """Return number of rows in the table."""
         query = f"SELECT COUNT(*) FROM {self.table}"
         try:
-            return self.con.execute(query).fetchone()[0]
+            with self.dbconnect as con:
+                return con.execute(query).fetchone()[0]
         except duckdb.CatalogException:
             return 0
 
     def query_df(self, query: str) -> pd.DataFrame:
         """Run a query and return a pandas DataFrame, restoring Period dtypes"""
-        df = self.con.execute(query).fetch_df()
-
-        # try to read column metadata for this table and restore Period columns
-        try:
-            q = (
-                "SELECT column_name, is_period, freq, how FROM __column_metadata__ "
-                "WHERE table_name = ?"
-            )
-            rows = self.con.execute(q, [self.table]).fetchall()
-        except Exception:
-            rows = []
+        with self.dbconnect as con:
+            df = con.execute(query).fetch_df()
+            # try to read column metadata for this table and restore Period columns
+            try:
+                q = (
+                    "SELECT column_name, is_period, freq, how FROM __column_metadata__ "
+                    "WHERE table_name = ?"
+                )
+                rows = con.execute(q, [self.table]).fetchall()
+            except Exception:
+                rows = []
 
         if rows:
             for col_name, is_period, freq, how in rows:
@@ -80,6 +141,7 @@ class DataFrame:
                     # ensure timestamp-like then convert back to Period
                     df[col_name] = pd.to_datetime(df[col_name])
                     df[col_name] = df[col_name].dt.to_period(freq)
+
         return df
 
     def __getitem__(self, key: Any) -> pd.DataFrame | pd.Series:
@@ -128,22 +190,22 @@ class DataFrame:
             with duckdb.connect(db_path) as con:
                 tables = [row[0] for row in con.execute("SHOW TABLES").fetchall()]
 
-                # Exclude internal / metadata tables (names starting with '__')
-                user_tables = [t for t in tables if not t.startswith("__")]
+            # Exclude internal / metadata tables (names starting with '__')
+            user_tables = [t for t in tables if not t.startswith("__")]
 
-                if not user_tables:
-                    raise ValueError(
-                        "No user tables found in the database. "
-                        "Found only metadata/internal tables."
-                    )
-                if len(user_tables) > 1:
-                    raise ValueError(
-                        "Multiple user tables found; please specify which table to "
-                        "use via the 'table' argument."
-                    )
-                # Exactly one user table — select it
-                table = user_tables[0]
-                return table
+            if not user_tables:
+                raise ValueError(
+                    "No user tables found in the database. "
+                    "Found only metadata/internal tables."
+                )
+            if len(user_tables) > 1:
+                raise ValueError(
+                    "Multiple user tables found; please specify which table to "
+                    "use via the 'table' argument."
+                )
+            # Exactly one user table — select it
+            table = user_tables[0]
+            return table
         except ValueError:
             return None
         return None
@@ -158,7 +220,8 @@ class DataFrame:
 
     @property
     def columns(self) -> list[str]:
-        return [row[0] for row in self.con.execute(f"DESCRIBE {self.table}").fetchall()]
+        with self.dbconnect as con:
+            return [row[0] for row in con.execute(f"DESCRIBE {self.table}").fetchall()]
 
     def __repr__(self):
         return f"<DataFrame table='{self.table}' db='{self.db_path}'>"
@@ -198,97 +261,104 @@ class DataFrame:
                     )
         return df_to_write, meta
 
-    def _create_table_with_enum(self, df):
-        table_exists = (
-            self.con.execute(
-                f"SELECT COUNT(*) FROM information_schema.tables "
-                f"WHERE table_name = '{self.table}'"
-            ).fetchone()[0]
-            > 0
-        )
-
-        # Create table
-        if not table_exists:
-            # no data insert
-            self.con.execute(f"CREATE TABLE {self.table} AS SELECT * FROM df LIMIT 0")
-
-            # Ensure GID_2 is stored as ENUM with its full category list
-            cats = df["GID_2"].cat.categories.tolist()
-            cats_escaped = [c.replace("'", "''") for c in cats]
-            enum_list = ",".join(f"'{c}'" for c in cats_escaped)
-            self.con.execute(
-                f"ALTER TABLE {self.table} ALTER GID_2 SET DATA TYPE ENUM({enum_list})"
+    def _create_table_with_enum(self, df, con=None):
+        ctx = self.dbconnect(read_only=False) if con is None else nullcontext(con)
+        with ctx as con:
+            table_exists = (
+                con.execute(
+                    f"SELECT COUNT(*) FROM information_schema.tables "
+                    f"WHERE table_name = '{self.table}'"
+                ).fetchone()[0]
+                > 0
             )
 
-        # Insert data
-        self.con.register("df", df)
-        self.con.execute(f"INSERT INTO {self.table} SELECT * FROM df")
-        self.con.unregister("df")
+            # Create table
+            if not table_exists:
+                # no data insert
+                con.execute(f"CREATE TABLE {self.table} AS SELECT * FROM df LIMIT 0")
 
-    def write_df(self, df: pd.DataFrame):
+                # Ensure GID_2 is stored as ENUM with its full category list
+                cats = df["GID_2"].cat.categories.tolist()
+                cats_escaped = [c.replace("'", "''") for c in cats]
+                enum_list = ",".join(f"'{c}'" for c in cats_escaped)
+                con.execute(
+                    f"ALTER TABLE {self.table} ALTER GID_2 SET DATA TYPE ENUM({enum_list})"
+                )
+
+            # Insert data
+            con.register("df", df)
+            con.execute(f"INSERT INTO {self.table} SELECT * FROM df")
+            con.unregister("df")
+
+    def write_df(self, df: pd.DataFrame, con=None):
         """Write a pandas DataFrame to the DuckDB table, replacing existing data.
         Minimal metadata support: detects Period dtypes and stores column_name
          -> freq in __column_metadata__.
         """
         df_to_write, meta = self._prepare_df(df)
 
-        # Write DataFrame into DuckDB
-        self.con.execute(f"DROP TABLE IF EXISTS {self.table}")
-        self._create_table_with_enum(df_to_write)
+        # Write DataFrame into DuckDB (only open once for read-write atomicity)
+        ctx = self.dbconnect(read_only=False) if con is None else nullcontext(con)
+        with ctx as con:
+            con.execute(f"DROP TABLE IF EXISTS {self.table}")
+            self._create_table_with_enum(df_to_write, con=con)
 
-        # Ensure metadata table exists, then replace rows for this table
-        self.con.execute(
-            """
-            CREATE TABLE IF NOT EXISTS __column_metadata__ (
-                table_name VARCHAR,
-                column_name VARCHAR,
-                is_period BOOLEAN,
-                freq VARCHAR,
-                how VARCHAR,
-                updated_at TIMESTAMP
-            )
-            """
-        )
-        # Delete existing metadata for this table, then insert new rows
-        self.con.execute(
-            "DELETE FROM __column_metadata__ WHERE table_name = ?", [self.table]
-        )
-
-        rows = []
-        for col, info in meta.items():
-            rows.append(
-                (
-                    self.table,
-                    col,
-                    True,
-                    info.get("freq"),
-                    info.get("how", "end"),
-                    pd.Timestamp.utcnow(),
+            # Ensure metadata table exists, then replace rows for this table
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS __column_metadata__ (
+                    table_name VARCHAR,
+                    column_name VARCHAR,
+                    is_period BOOLEAN,
+                    freq VARCHAR,
+                    how VARCHAR,
+                    updated_at TIMESTAMP
                 )
+                """
+            )
+            # Delete existing metadata for this table, then insert new rows
+            con.execute(
+                "DELETE FROM __column_metadata__ WHERE table_name = ?", [self.table]
             )
 
-        if rows:
-            self.con.executemany(
-                "INSERT INTO __column_metadata__ VALUES (?, ?, ?, ?, ?, ?)", rows
-            )
+            rows = []
+            for col, info in meta.items():
+                rows.append(
+                    (
+                        self.table,
+                        col,
+                        True,
+                        info.get("freq"),
+                        info.get("how", "end"),
+                        pd.Timestamp.utcnow(),
+                    )
+                )
+
+            if rows:
+                con.executemany(
+                    "INSERT INTO __column_metadata__ VALUES (?, ?, ?, ?, ?, ?)", rows
+                )
 
     def append(self, df: pd.DataFrame):
         """Append a pandas DataFrame to the existing DuckDB table, updating metadata
         as needed.
         """
 
-        table_exists = (
-            self.con.execute(
-                f"SELECT COUNT(*) FROM information_schema.tables "
-                f"WHERE table_name = '{self.table}'"
-            ).fetchone()[0]
-            > 0
-        )
+        # We keep the read-write connection open for the duration of this method
+        # to avoid multiple open/close cycles which would introduce non-atomicity.
+        with self.dbconnect(read_only=False) as con:
+            table_exists = (
+                con.execute(
+                    f"SELECT COUNT(*) FROM information_schema.tables "
+                    f"WHERE table_name = '{self.table}'"
+                ).fetchone()[0]
+                > 0
+            )
 
-        if not table_exists:
-            # First write, use write_df to ensure metadata is created
-            self.write_df(df)
-        else:
-            # Subsequently append
-            df_to_write, meta = self._prepare_df(df)
-            self._create_table_with_enum(df_to_write)
+            if not table_exists:
+                # First write, use write_df to ensure metadata is created
+                self.write_df(df, con=con)
+            else:
+                # Subsequently append
+                df_to_write, meta = self._prepare_df(df)
+                self._create_table_with_enum(df_to_write, con=con)

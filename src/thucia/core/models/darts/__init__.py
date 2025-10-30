@@ -25,10 +25,11 @@ class DartsBase:
         geo_col="GID_2",
         covariate_cols: Optional[List[str]] = None,
         horizon=1,
-        num_samples=1000,
+        num_samples: int | None = None,
         db_file: str | Path | None = None,
         train_start_date=None,
         train_end_date=None,
+        multivariate: bool = False,
     ):
         self.df = df
         self.case_col = case_col
@@ -36,8 +37,12 @@ class DartsBase:
         self.geo_col = geo_col
         self.covariate_cols = covariate_cols or []
         self.horizon = horizon
-        self.num_samples = num_samples
+        self.num_samples = num_samples or 1000
         self.db_file = Path(db_file) if db_file else None
+        self.multivariate = multivariate
+
+        if "GID_2_codes" not in self.covariate_cols:
+            self.covariate_cols.append("GID_2_codes")  # added in get_cases
 
         if self.db_file:
             logging.debug(f"Darts model initialized with file store: {self.db_file}")
@@ -78,9 +83,33 @@ class DartsBase:
         self.train_start_date = train_start_date
         self.train_end_date = train_end_date
 
+        # Skip training / forecasting in GID_2s with all zeros in training period
+        self.identify_noincidence_regions()
+
         # Parameters and functionality provided by subclasses
         self.sampling_method = None
         self.model = self.build_model()
+
+    def identify_noincidence_regions(self):
+        # Reject GID_2 with all zeros in training period
+        def has_nonzero_cases(gdf):
+            gdf_train = gdf[
+                (gdf[self.date_col] >= self.train_start_date)
+                & (gdf[self.date_col] <= self.train_end_date)
+            ]
+            return (gdf_train[self.case_col] > 0).any()
+
+        self.valid_gids = (
+            self.df.groupby(self.geo_col)
+            .filter(has_nonzero_cases)[self.geo_col]
+            .unique()
+        )
+        self.rejected_gids = set(self.df[self.geo_col].unique()) - set(self.valid_gids)
+        if self.rejected_gids:
+            logging.info(
+                f"Excluding {len(self.rejected_gids)} GID_2s with no incidence in "
+                "training period."
+            )
 
     # Child classes must override this method to provide concrete functionality
     def build_model(self):
@@ -108,6 +137,12 @@ class DartsBase:
             start_date = df[self.date_col].min()
         if end_date is None:
             end_date = df[self.date_col].max()
+
+        # Add GID2 as numeric code
+        if "GID_2_codes" not in df.columns:
+            df.loc[:, "GID_2_codes"] = df["GID_2"].cat.codes
+        if "GID_2_codes" not in self.covariate_cols:
+            self.covariate_cols.append("GID_2_codes")
 
         start_date = align_date_types(start_date, df[self.date_col])
         end_date = align_date_types(end_date, df[self.date_col])
@@ -145,10 +180,39 @@ class DartsBase:
 
         return target_list, covar_list, target_gids
 
+    def _historical_predictions_per_region(
+        self,
+        *,
+        tdf_out: DataFrame,
+        retrain: bool = True,  # only turn off for faster testing
+        start_date: pd.Timestamp | None = None,
+        geo_col: str = "GID_1",
+    ) -> DataFrame | pd.DataFrame:
+        gid_list = self.df[geo_col].unique().tolist()
+        for ix, gid in enumerate(gid_list):
+            logging.info(f"Processing {geo_col}: {gid}...")
+            tic = pd.Timestamp.now()
+            df_gid = self.df[self.df[geo_col] == gid].copy()
+
+            # predictions are always pd.DataFrame
+            self._historical_predictions_onepass(
+                df=df_gid,
+                tdf_out=tdf_out,
+                retrain=retrain,
+                start_date=start_date,
+            )
+
+            # Estimate time remaining
+            toc = pd.Timestamp.now()
+            logging.info(f"Completed {geo_col}: {gid} in {toc - tic}.")
+            estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
+            logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
+        return tdf_out
+
     def historical_predictions(
         self,
         *,
-        train_per_region: bool = False,
+        model_admin_level: int | None = None,  # 0=country, 1=state, 2=municipality
         retrain: bool = True,  # only turn off for faster testing
         start_date: pd.Timestamp | None = None,
     ) -> DataFrame | pd.DataFrame:
@@ -156,136 +220,100 @@ class DartsBase:
         Pre-fits on all regions, then generates historical forecasts for each region
         separately.
         """
-        # Training and forecasting loop
-        if train_per_region:
-            # Output (Thucia DataFrame if db_file specified, pd.DataFrame otherwise)
-            tdf = (
-                DataFrame(db_file=Path(self.db_file), new_file=True)
-                if self.db_file
-                else []
-            )
-            gid_list = self.df["GID_2"].unique().tolist()
-            for ix, gid in enumerate(gid_list):
-                logging.info(f"Processing GID_2: {gid}...")
-                tic = pd.Timestamp.now()
-                df_gid = self.df[self.df["GID_2"] == gid].copy()
+        model_admin_level = model_admin_level if model_admin_level is not None else 0
+        logging.info(
+            f"Generating historical predictions at admin level {model_admin_level}."
+        )
 
-                # predictions are always pd.DataFrame
-                tdf.append(
-                    self._historical_predictions_onepass(
-                        df=df_gid,
-                        retrain=retrain,
-                        start_date=start_date,
-                    )
-                )
+        tdf = (
+            DataFrame(db_file=Path(self.db_file), new_file=True)
+            if self.db_file
+            else DataFrame()  # fallback to in-memory DataFrame
+        )
 
-                # Estimate time remaining
-                toc = pd.Timestamp.now()
-                logging.info(f"Completed GID_2: {gid} in {toc - tic}.")
-                estimated_time_remaining = (toc - tic) * (len(gid_list) - ix - 1)
-                logging.info(f"Estimated time remaining: {estimated_time_remaining}.")
-
-            if isinstance(tdf, pd.DataFrame):
-                tdf = pd.concat(tdf).reset_index()
-
-            return tdf
-        else:
-            return self._historical_predictions_onepass(
+        if model_admin_level == 0:  # Train on entire country
+            tdf = self._historical_predictions_onepass(
+                tdf_out=tdf,
                 retrain=retrain,
                 start_date=start_date,
             )
 
-    def _historical_predictions_onepass(
+        elif model_admin_level == 1:  # Train per state (GID_1)
+            tdf = self._historical_predictions_per_region(
+                tdf_out=tdf,
+                retrain=retrain,
+                start_date=start_date,
+                geo_col="GID_1",
+            )
+        elif model_admin_level == 2:  # Train per municipality (GID_2)
+            tdf = self._historical_predictions_per_region(
+                tdf_out=tdf,
+                retrain=retrain,
+                start_date=start_date,
+                geo_col="GID_2",
+            )
+        else:
+            raise ValueError(
+                f"model_admin_level must be 0, 1, or 2 (got '{model_admin_level}')."
+            )
+
+        return tdf
+
+    def _extract_horizons(
         self,
-        *,
-        df: pd.DataFrame | None = None,
-        retrain: bool = True,  # only turn off for faster testing
-        start_date: pd.Timestamp | None = None,
-    ) -> pd.DataFrame:
-        """
-        Pre-fits on all regions, then generates historical forecasts for each region
-        separately.
-        """
-        df = df if df is not None else self.df  # use provided df, fallback to self.df
-
-        if start_date is None:
-            start_date = df["Date"].min()
-
-        # Convert floats to 32-bit precision
-        float_cols = df.select_dtypes(include="float").columns
-        df[float_cols] = df[float_cols].astype(np.float32)
-
-        # Model pre-fit
-        target_gids = df["GID_2"].unique()
-        self.pre_fit(target_gids=target_gids)
-
-        # Now include future data for forecasting, ensuring the same GID mapping
-        target_list, covar_list, _ = self.get_cases(target_gids=target_gids)
-
+        bt,
+        gid,
+    ):
+        # process horizons separately
         rows = []
-        for ts, cov, gid in zip(target_list, covar_list, target_gids):
-            logging.info(f"Forecasting for GID_2 {gid}")
-            tic = pd.Timestamp.now()
-            start_date_timestamp = start_date.to_timestamp(how="end")
-            try:
-                bt = self.historical_forecasts(
-                    ts, cov, start_date=start_date_timestamp, retrain=retrain
-                )
-                # bt = [time]series[horizon][1][samples]
-            except ValueError as e:
-                logging.warning(
-                    f"Failed to fit for GID_2 {gid} (msg: {e}), skipping..."
-                )
-                continue
+        for h in range(self.horizon):
+            vals = np.concat([TimeSeries.all_values(t)[h, :, :] for t in bt])
+            dates = np.array([t.time_index[h] for t in bt])
 
-            # process horizons separately
-            for h in range(self.horizon):
-                vals = np.concat([TimeSeries.all_values(t)[h, :, :] for t in bt])
-                dates = np.array([t.time_index[h] for t in bt])
+            out = pd.DataFrame(vals)
+            out["Date"] = dates
+            out = out.melt(
+                id_vars="Date",
+                var_name="sample",
+                value_name="prediction",
+            )
+            out["sample"] = out["sample"].astype(int)
+            out["GID_2"] = gid
 
-                out = pd.DataFrame(vals)
-                out["Date"] = dates
-                out = out.melt(
-                    id_vars="Date",
-                    var_name="sample",
-                    value_name="prediction",
-                )
-                out["sample"] = out["sample"].astype(int)
-                out["GID_2"] = gid
-
-                if len(out) > 1:
-                    # samples to quantiles
-                    out = (
-                        pd.concat(
-                            {
-                                k: sample_to_quantiles_vec(
-                                    np.expm1(g["prediction"]).clip(
-                                        lower=0
-                                    ),  # transform before quantiles
-                                    self.quantiles,
-                                )
-                                for k, g in out.groupby(["Date", "GID_2"])
-                            },
-                            names=["Date", "GID_2"],
-                        )
-                        .reset_index()
-                        .rename(columns={"value": "prediction"})
-                        .drop(columns=["level_2"])
+            if len(out) > 1:
+                # samples to quantiles
+                out = (
+                    pd.concat(
+                        {
+                            k: sample_to_quantiles_vec(
+                                np.expm1(g["prediction"]).clip(
+                                    lower=0
+                                ),  # transform before quantiles
+                                self.quantiles,
+                            )
+                            for k, g in out.groupby(["Date", "GID_2"])
+                        },
+                        names=["Date", "GID_2"],
                     )
-                    out["horizon"] = h + 1  # 1-based horizon
-                else:
-                    out["quantile"] = 0.5
-                    out["horizon"] = h + 1  # 1-based horizon
-                    out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                    out = out.drop(columns=["sample"])
+                    .reset_index()
+                    .rename(columns={"value": "prediction"})
+                    .drop(columns=["level_2"])
+                )
+                out["horizon"] = h + 1  # 1-based horizon
+            else:
+                out["quantile"] = 0.5
+                out["horizon"] = h + 1  # 1-based horizon
+                out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
+                out = out.drop(columns=["sample"])
 
-                rows.append(out)
+            rows.append(out)
+        return rows
 
-            toc = pd.Timestamp.now()
-            logging.info(f"Region {gid} done in {toc - tic}")
-
-        preds = pd.concat(rows, ignore_index=True)
-
+    def _merge_cases(
+        self,
+        df: pd.DataFrame,
+        preds: pd.DataFrame,
+    ) -> pd.DataFrame:
         # Ensure Date is in original format
         freq = df["Date"].dtype.freq.freqstr[0]
         preds["Date"] = preds["Date"].dt.to_period(freq)
@@ -304,5 +332,127 @@ class DartsBase:
         )
         # Return Cases to original scale
         preds["Cases"] = np.expm1(preds["Log_Cases"])
-
         return preds
+
+    def _historical_predictions_onepass(
+        self,
+        *,
+        df: pd.DataFrame | None = None,
+        tdf_out: DataFrame,
+        retrain: bool = True,  # only turn off for faster testing
+        start_date: pd.Timestamp | None = None,
+    ) -> pd.DataFrame:
+        """
+        Pre-fits on all regions, then generates historical forecasts for each region
+        separately.
+        """
+        df = df if df is not None else self.df  # use provided df, fallback to self.df
+
+        if start_date is None:
+            start_date = df["Date"].min()
+
+        # Convert floats to 32-bit precision
+        float_cols = df.select_dtypes(include="float").columns
+        df[float_cols] = df[float_cols].astype(np.float32)
+
+        # Model pre-fit
+        all_target_gids = df["GID_2"].unique()
+        target_gids = [gid for gid in all_target_gids if gid not in self.rejected_gids]
+        self.pre_fit(target_gids=target_gids)
+
+        # Now include future data for forecasting, ensuring the same GID mapping
+        target_list, covar_list, _ = self.get_cases(target_gids=target_gids)
+
+        if self.multivariate:
+            logging.info(f"Forecasting for {len(target_gids)} regions (multivariate)")
+            tic = pd.Timestamp.now()
+            start_date_timestamp = start_date.to_timestamp(how="end")
+            try:
+                bt = self.historical_forecasts(
+                    target_list,
+                    covar_list,
+                    start_date=start_date_timestamp,
+                    retrain=retrain,
+                )
+                # for multivariate, bt is a list per time-series:
+                # bt = [gid][time]series[horizon][1][samples]
+            except ValueError as e:
+                logging.warning(
+                    f"Failed to fit for GID_2 {target_gids} (multivariate) "
+                    f"(msg: {e}), skipping..."
+                )
+            rows = []
+            for ix, gid in enumerate(target_gids):
+                rows = self._merge_cases(
+                    df,
+                    pd.concat(
+                        self._extract_horizons(bt[ix], gid),
+                        ignore_index=True,
+                    ),
+                )
+                tdf_out.append(rows)
+            toc = pd.Timestamp.now()
+            logging.info(f"Regions {target_gids} done in {toc - tic}")
+        else:
+            for ts, cov, gid in zip(target_list, covar_list, target_gids):
+                logging.info(f"Forecasting for GID_2 {gid}")
+                tic = pd.Timestamp.now()
+                start_date_timestamp = start_date.to_timestamp(how="end")
+                try:
+                    bt = self.historical_forecasts(
+                        ts, cov, start_date=start_date_timestamp, retrain=retrain
+                    )
+                    # for univariate, bt relates to a single time-series:
+                    # bt = [time]series[horizon][1][samples]
+                except ValueError as e:
+                    logging.warning(
+                        f"Failed to fit for GID_2 {gid} (msg: {e}), skipping..."
+                    )
+                    continue
+                tdf_out.append(
+                    self._merge_cases(
+                        df,
+                        pd.concat(
+                            self._extract_horizons(bt, gid),
+                            ignore_index=True,
+                        ),
+                    )
+                )
+                toc = pd.Timestamp.now()
+                logging.info(f"Region {gid} done in {toc - tic}")
+
+        # Substitute back all-zero regions
+        if self.rejected_gids:
+            dates = df["Date"].unique()
+            dates = dates[dates >= start_date]
+            dates = dates.to_timestamp(how="end")
+            dates = np.sort(dates)
+        for gid in set(all_target_gids) - set(target_gids):
+            logging.info(f"Adding all-zero predictions for GID_2 {gid}...")
+            # Create rows with predictions equal to zero
+            out = pd.DataFrame(
+                [
+                    (d, gid, q, 0, h + 1)
+                    for d in dates
+                    for h in range(self.horizon)
+                    for q in self.quantiles
+                ],
+                columns=["Date", "GID_2", "quantile", "prediction", "horizon"],
+            )
+            # Remove predictions outside forecasting range (to match other regions)
+            for ix, date in enumerate(dates):
+                if ix < self.horizon:
+                    # Remove predictions before horizon available
+                    out = out[~((out["Date"] == date) & (out["horizon"] > ix + 1))]
+                if len(dates) - ix <= self.horizon:
+                    # Remove predictions after data available
+                    out = out[
+                        ~(
+                            (out["Date"] == date)
+                            & (out["horizon"] <= self.horizon - len(dates) + ix)
+                        )
+                    ]
+            # Add to database
+            tdf_out.append(self._merge_cases(df, out))
+
+        return tdf_out

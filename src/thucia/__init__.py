@@ -1,8 +1,9 @@
 import argparse
-import subprocess
+import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
-from pathlib import Path
+
+from .cli import CommandsList
 
 try:
     __version__ = version("thucia")
@@ -11,24 +12,34 @@ except PackageNotFoundError:
     pass
 
 
-def launch_dashboard(args):
-    app_path = Path(__file__).parent / "viz" / "dashboard" / "app.py"
-    subprocess.run(["streamlit", "run", app_path], check=True)
-
-
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    # Parser
     parser = argparse.ArgumentParser(description="Thucia")
-    parser.add_argument(
-        "-v", "--version", action="version", version=f"%(prog)s {__version__}"
+    sub = parser.add_subparsers(
+        dest="_command",
+        title="Available Commands",
+        metavar="<command>",
+        required=True,
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    for c in CommandsList:
+        c.add_to_subparsers(sub)
+    return parser
 
-    dash = subparsers.add_parser("dashboard", help="Start the Thucia dashboard server")
-    dash.set_defaults(func=launch_dashboard)
 
-    args = parser.parse_args()
-    args.func(args)
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    cmd_cls = getattr(args, "_command_class", None)
+    if cmd_cls is None:
+        parser.print_help()
+        return 2
+    cmd = cmd_cls()
+    try:
+        return cmd.execute(args)
+    except Exception as exc:
+        print("Unhandled error:", exc, file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
