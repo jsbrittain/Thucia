@@ -226,7 +226,9 @@ class DartsBase:
         )
 
         tdf = (
-            DataFrame(db_file=Path(self.db_file), new_file=True) if self.db_file else []
+            DataFrame(db_file=Path(self.db_file), new_file=True)
+            if self.db_file
+            else DataFrame()  # fallback to in-memory DataFrame
         )
 
         if model_admin_level == 0:  # Train on entire country
@@ -392,7 +394,6 @@ class DartsBase:
             toc = pd.Timestamp.now()
             logging.info(f"Regions {target_gids} done in {toc - tic}")
         else:
-            rows = []
             for ts, cov, gid in zip(target_list, covar_list, target_gids):
                 logging.info(f"Forecasting for GID_2 {gid}")
                 tic = pd.Timestamp.now()
