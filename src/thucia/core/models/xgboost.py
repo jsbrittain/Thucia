@@ -83,7 +83,7 @@ def xgboost(
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
     db_file: str | Path | None = None,
-    model_admin_level: bool = True,  # Train a separate model for each region
+    model_admin_level: int | None = None,
     num_samples: int | None = None,
     multivariate: bool = True,
 ) -> DataFrame | pd.DataFrame:
