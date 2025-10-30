@@ -24,6 +24,7 @@ def aggregate_cases(
     df: DataFrame | pd.DataFrame,
     statuses: list[str] | None = None,
     cases_col: str = "Cases",
+    cutoff_date: pd.Timestamp | str | None = None,
     fill_column: str | None = "GID_2",
     freq: str = "M",
 ) -> pd.DataFrame:
@@ -37,6 +38,7 @@ def aggregate_cases(
     statuses : list[str], optional
         Subset of Status values to include.
     cases_col : str, optional
+    cutoff_date : str, optional
     fill_column : str, optional
         If provided, will fill missing Dates, grouped by 'fill_column'.
     freq: str
@@ -66,6 +68,23 @@ def aggregate_cases(
                 "DataFrame must contain a 'Status' column to use `statuses`."
             )
         df = df[df["Status"].isin(statuses)].copy()
+
+    cutoff_date = pd.to_datetime(cutoff_date) if cutoff_date is not None else None
+    if cutoff_date is not None:
+        mask = pd.to_datetime(df["Date"]) <= cutoff_date
+        if cases_col in df.columns:
+            logging.info(
+                f"Removing n={df[~mask][cases_col].sum()} cases occuring "
+                f"after cutoff date {cutoff_date.date()}, remaining cases: "
+                f"{df[mask][cases_col].sum()}"
+            )
+        else:
+            logging.info(
+                f"Removing n={len(df[~mask])} records occuring after "
+                f"cutoff date {cutoff_date.date()}, remaining records: "
+                f"{len(df[mask])}"
+            )
+        df = df[mask]
 
     if cases_col in df.columns:
         incoming_case_count = df[cases_col].sum()
