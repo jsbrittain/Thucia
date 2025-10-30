@@ -1,9 +1,11 @@
 import logging
+from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
 from thucia.core.cases import align_date_types
+from thucia.core.fs import DataFrame
 
 
 class BaselineSamples:
@@ -63,16 +65,21 @@ class BaselineSamples:
 
 
 def baseline(
-    df: pd.DataFrame,  # DataFrame with columns: Date, GID_1, GID_2, Cases, future
+    df: pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
-    gid_1: list[str] | None = None,
-    samples: int = 1000,
-    covariate_cols: list[str] | None = None,
+    gid_1: List[str] | None = None,
     horizon: int = 1,
+    case_col: str = "Log_Cases",
+    covariate_cols: list[str] | None = None,
+    retrain: bool = True,  # Retrain after every step (accurate but slow)
+    db_file: str | Path | None = None,
+    model_admin_level: int = 0,  # Admin level for model training
+    num_samples: int | None = None,
+    multivariate: bool = True,
     # --- Model parameters ---
     symmetrize: bool = True,
-    # --- Unusued parameters (for compatibility with other models) ---
+    # --- Unused parameters (for compatibility with other models) ---
     *args,
     **kwargs,
 ) -> (
@@ -84,6 +91,13 @@ def baseline(
         logging.warning(f"Unused positional arguments: {args}")
     if kwargs:
         logging.warning(f"Unused keyword arguments: {kwargs}")
+
+    if isinstance(df, DataFrame):
+        df = df.df
+    else:
+        df = df.copy()
+
+    num_samples = num_samples or 1000
 
     # Determine start and end dates
     if start_date is None:
@@ -103,8 +117,16 @@ def baseline(
         df["Date"].max(),
     )
 
+    df = df[df["Date"].between(start_date, end_date)]
+
+    # Output dataframe
+    tdf = (
+        DataFrame(db_file=Path(db_file), new_file=True)
+        if db_file
+        else DataFrame()  # fallback to in-memory DataFrame
+    )
+
     # Loop over regions
-    df_samples = []
     for gid2 in df["GID_2"].unique():
         logging.info(f"Processing region {gid2} for baseline model")
         # Filter data for the current region
@@ -113,6 +135,7 @@ def baseline(
         # Calculate incidence differences
         inc_diffs = region_data["Cases"].diff().fillna(0)
 
+        df_samples = []
         for step_ahead in range(1, horizon + 1):
             logging.info(f"Processing horizon: {step_ahead}")
 
@@ -143,32 +166,30 @@ def baseline(
                     # shortcut the model by setting the horizon to 1 (in the case of
                     # symmetrized baselines only), otherwise sample the full horizon...
                     horizon=1 if symmetrize else step_ahead,
-                    nsim=samples,
+                    nsim=num_samples,
                 )[:, -1]  # ...taking only the furthest point as the n-step predictor
                 predictions = np.clip(predictions, 0, None)
 
                 df_samples.append(
                     pd.DataFrame(
                         {
-                            "GID_2": [gid2] * samples,
-                            "Date": [region_data.index[k]] * samples,
-                            "sample": list(range(samples)),
+                            "GID_2": [gid2] * num_samples,
+                            "Date": [region_data.index[k]] * num_samples,
+                            "sample": list(range(num_samples)),
                             "prediction": predictions.tolist(),
-                            "horizon": [step_ahead] * samples,
+                            "horizon": [step_ahead] * num_samples,
                             "Cases": region_data["Cases"].iloc[k],  # actual case count
                         }
                     )
                 )
-    df_predictions = pd.concat(df_samples, ignore_index=True)
-
-    # Ensure all GID_2, Date combinations in df are present in df_predictions
-    df_predictions = df_predictions.merge(
-        df[["GID_2", "Date", "Cases", "future"]],
-        on=["GID_2", "Date", "Cases"],
-        how="right",
-    )
-
-    df_predictions = df_predictions[df_predictions["Date"] >= start_date]
+        df_predictions = pd.concat(df_samples, ignore_index=True)
+        tdf.append(
+            df_predictions.merge(
+                df[["GID_2", "Date", "Cases", "future"]],
+                on=["GID_2", "Date", "Cases"],
+                how="right",
+            )
+        )
 
     logging.info("Baseline model complete.")
-    return df_predictions
+    return tdf

@@ -84,9 +84,7 @@ def run_model(
             if isinstance(df_model, pd.DataFrame):
                 df_model = samples_to_quantiles(df_model)
             elif isinstance(df_model, DataFrame):
-                raise NotImplementedError(
-                    "samples_to_quantiles not implemented for thucia DataFrame"
-                )
+                df_model = samples_to_quantiles(df_model.df)
             else:
                 raise TypeError("df_model must be a pd.DataFrame or thucia DataFrame")
         else:
