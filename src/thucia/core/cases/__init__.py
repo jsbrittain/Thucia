@@ -74,13 +74,13 @@ def aggregate_cases(
         mask = pd.to_datetime(df["Date"]) <= cutoff_date
         if cases_col in df.columns:
             logging.info(
-                f"Removing n={df[~mask][cases_col].sum()} cases occuring "
+                f"Removing n={df[~mask][cases_col].sum()} cases occurring "
                 f"after cutoff date {cutoff_date.date()}, remaining cases: "
                 f"{df[mask][cases_col].sum()}"
             )
         else:
             logging.info(
-                f"Removing n={len(df[~mask])} records occuring after "
+                f"Removing n={len(df[~mask])} records occurring after "
                 f"cutoff date {cutoff_date.date()}, remaining records: "
                 f"{len(df[mask])}"
             )
