@@ -100,7 +100,7 @@ class DartsBase:
             return (gdf_train[self.case_col] > 0).any()
 
         self.valid_gids = (
-            self.df.groupby(self.geo_col)
+            self.df.groupby(self.geo_col, observed=False)
             .filter(has_nonzero_cases)[self.geo_col]
             .unique()
         )
@@ -140,7 +140,7 @@ class DartsBase:
 
         # Add GID2 as numeric code
         if "GID_2_codes" not in df.columns:
-            df.loc[:, "GID_2_codes"] = df["GID_2"].cat.codes
+            df = df.assign(GID_2_codes=df["GID_2"].cat.codes)
         if "GID_2_codes" not in self.covariate_cols:
             self.covariate_cols.append("GID_2_codes")
 
@@ -291,7 +291,7 @@ class DartsBase:
                                 ),  # transform before quantiles
                                 self.quantiles,
                             )
-                            for k, g in out.groupby(["Date", "GID_2"])
+                            for k, g in out.groupby(["Date", "GID_2"], observed=False)
                         },
                         names=["Date", "GID_2"],
                     )
@@ -381,6 +381,7 @@ class DartsBase:
                     f"Failed to fit for GID_2 {target_gids} (multivariate) "
                     f"(msg: {e}), skipping..."
                 )
+                self.rejected_gids.update(target_gids)
             rows = []
             for ix, gid in enumerate(target_gids):
                 rows = self._merge_cases(
@@ -412,6 +413,7 @@ class DartsBase:
                     logging.warning(
                         f"Failed to fit for GID_2 {gid} (msg: {e}), skipping..."
                     )
+                    self.rejected_gids.add(gid)
                     continue
                 tdf_out.append(
                     self._merge_cases(
@@ -426,7 +428,17 @@ class DartsBase:
                 logging.info(f"Region {gid} done in {toc - tic}")
 
         # Substitute back all-zero regions
+        #
+        # Re-compute target_gids to account for new entried due to fitting errors; we do
+        # not use self.rejected_gids directly as it is not specific to the geographic
+        # region being assessed.
+        target_gids = [gid for gid in all_target_gids if gid not in self.rejected_gids]
         if self.rejected_gids:
+            logging.info(
+                f"Adding all-zero predictions for {len(self.rejected_gids)} "
+                "GID_2s with no incidence in training period, or estimation errors..."
+            )
+            logging.info(f"Rejected GID_2s: {self.rejected_gids}")
             dates = df["Date"].unique()
             dates = dates[dates >= start_date]
             dates = dates.to_timestamp(how="end")
