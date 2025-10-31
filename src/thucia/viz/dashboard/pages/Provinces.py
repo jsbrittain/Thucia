@@ -81,7 +81,9 @@ def overlay_plot(data, color, **kwargs):
 
     if show_interval:
         ax.fill_between(
-            data[data["quantile"] == 0.5]["Date"].values,
+            # Take date from same quantiles as plot (there can be missing edge quantiles
+            # compared with median quantiles)
+            data[data["quantile"] == 0.05]["Date"].values,
             data[data["quantile"] == 0.05]["prediction"].values,
             data[data["quantile"] == 0.95]["prediction"].values,
             color="green",

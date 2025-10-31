@@ -142,6 +142,18 @@ def baseline(
         for step_ahead in range(1, horizon + 1):
             logging.info(f"Processing horizon: {step_ahead}")
 
+            df_quantiles.append(
+                pd.DataFrame(
+                    {
+                        "GID_2": [gid2] * 3,
+                        "Date": region_data.index[:3],
+                        "quantile": [0.5] * 3,
+                        "prediction": [np.nan] * 3,
+                        "horizon": [step_ahead] * 3,
+                    }
+                )
+            )
+
             # Historical forecasting
             for k in range(2 + step_ahead, len(region_data)):
                 # Instantiate model
@@ -188,13 +200,14 @@ def baseline(
                     )
                 )
         df_predictions = pd.concat(df_quantiles, ignore_index=True)
-        tdf.append(
-            df_predictions.merge(
-                df[["GID_2", "Date", "Cases", "future"]],
-                on=["GID_2", "Date"],
-                how="right",
-            )
+        df_one_region = df_predictions.merge(
+            df[["GID_2", "Date", "Cases", "future"]],
+            on=["GID_2", "Date"],
+            how="left",
         )
+        # Copy GID_2 categories from original DataFrame
+        df_one_region["GID_2"] = df_one_region["GID_2"].astype(df["GID_2"].dtype)
+        tdf.append(df_one_region)
 
     logging.info("Baseline model complete.")
     return tdf
