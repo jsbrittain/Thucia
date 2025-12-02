@@ -1,10 +1,14 @@
 import logging
 from collections import deque
+from pathlib import Path
 from typing import List
 from typing import Sequence
 
 import numpy as np
 import pandas as pd
+from thucia.core.fs import DataFrame
+
+quantiles = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
 
 
 def add_residual_quantiles(
@@ -15,10 +19,11 @@ def add_residual_quantiles(
     y_col: str = "Cases",
     pred_col: str = "prediction",
     horizon_col: str = "horizon",
-    quantile_levels: Sequence[float] = (0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95),
+    quantile_levels: Sequence[float] = quantiles,
     window: int = None,  # None => expanding; integer => moving window size
     min_history: int = 20,
     pool_across_gids_if_sparse: bool = True,
+    db_file: str = None,
 ) -> pd.DataFrame:
     """
     Post-hoc predictive distribution from deterministic forecasts via residual quantiles.
@@ -32,8 +37,16 @@ def add_residual_quantiles(
         # df = df.copy()
         ...
 
-    # Defensive parsing; invalid parse -> NaT (we'll drop those)
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    # Output dataframe
+    tdf = (
+        DataFrame(db_file=Path(db_file), new_file=True)
+        if db_file
+        else DataFrame()  # fallback to in-memory DataFrame
+    )
+
+    # Log transform
+    df["prediction"] = np.log1p(df["prediction"])
+    df["Cases"] = np.log1p(df["Cases"])
 
     # If your point predictions have NaNs, we can’t recover—surface early.
     if df[pred_col].isna().all():
@@ -60,6 +73,7 @@ def add_residual_quantiles(
         unique_dates = np.unique(dates)
 
         for d in unique_dates:
+            logging.info(f"  Processing date {d}")
             day_mask = dates == d
             df_apply = dfh.loc[day_mask]
 
@@ -90,12 +104,15 @@ def add_residual_quantiles(
                 for q, v in zip(quantile_levels, preds_q):
                     out_records.append(
                         {
-                            date_col: pd.to_datetime(d),
+                            date_col: d,
                             gid_col: g,
                             horizon_col: h,
                             "quantile": float(q),
-                            pred_col: float(v),
+                            pred_col: np.expm1(float(v)).clip(lower=0.0),
                             y_col: df_apply[y_col].iloc[i],
+                            "Cases": np.expm1(df_apply["Cases"].iloc[i]).clip(
+                                lower=0.0
+                            ),
                         }
                     )
 
@@ -119,20 +136,6 @@ def add_residual_quantiles(
                         while len(pooled_hist) > window:
                             pooled_hist.popleft()
 
-        out_df = pd.DataFrame.from_records(out_records)
+        tdf.append(pd.DataFrame.from_records(out_records))
 
-        from thucia.core.cases import write_nc
-
-        write_nc(out_df, f"residual_quantiles_h{h}.nc")
-
-    # Enforce nondecreasing quantiles within each (Date,GID,horizon)
-    # def _enforce_monotone(group):
-    #     group = group.sort_values("quantile").copy()
-    #     group["prediction"] = np.maximum.accumulate(group["prediction"].to_numpy())
-    #     return group
-    # if not out_df.empty:
-    #     out_df = (out_df.groupby([date_col, gid_col, horizon_col], group_keys=False)
-    #                      .apply(_enforce_monotone)
-    #                      .reset_index(drop=True))
-
-    return out_df
+    return tdf

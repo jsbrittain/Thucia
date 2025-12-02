@@ -20,11 +20,14 @@ class NBEATSSamples(DartsBase):
         return NBEATSModel(
             input_chunk_length=48,
             output_chunk_length=1,
-            dropout=0.2,  # MC dropout also adds stochasticity
-            generic_architecture=True,  # default; works well for pooled/global
+            generic_architecture=True,
+            num_stacks=3,
+            num_blocks=2,
+            layer_widths=192,
+            dropout=0.2,
             likelihood=GaussianLikelihood(),
             random_state=42,
-            n_epochs=150,  # default 100
+            n_epochs=150,
             batch_size=64,
             force_reset=True,
         )
