@@ -22,6 +22,7 @@ dependencies = [
     "pyarrow>=20.0.0",
     "rapidfuzz>=3.13.0",
     "rasterstats>=0.20.0",
+    "tqdm>=4.67.1",
     "typing-extensions>=4.14.0",
     "xarray>=2025.6.0",
 ]

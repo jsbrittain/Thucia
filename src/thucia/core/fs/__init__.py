@@ -174,6 +174,6 @@ def read_db(
         return DataFrame(df=read_zarr(filename))
 
     raise ValueError(
-        f"Unsupported file extension: {Path(filename).suffix}. "
-        "Supported: .duckdb, .nc, .zarr"
+        "Could not open file, missing or unsupported file extension"
+        " (supported: .duckdb, .nc, .zarr)."
     )
