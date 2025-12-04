@@ -9,6 +9,7 @@ import torch
 from darts import TimeSeries
 from thucia.core.cases import align_date_types
 from thucia.core.fs import DataFrame
+from thucia.core.models.utils import quantiles as default_quantiles
 from thucia.core.models.utils import sample_to_quantiles_vec
 
 torch.set_float32_matmul_precision(
@@ -30,6 +31,7 @@ class DartsBase:
         train_start_date=None,
         train_end_date=None,
         multivariate: bool = False,
+        quantiles: List[float] | None = None,
     ):
         self.df = df
         self.case_col = case_col
@@ -40,6 +42,7 @@ class DartsBase:
         self.num_samples = num_samples or 1000
         self.db_file = Path(db_file) if db_file else None
         self.multivariate = multivariate
+        self.quantiles = quantiles or default_quantiles
 
         if "GID_2_codes" not in self.covariate_cols:
             self.covariate_cols.append("GID_2_codes")  # added in get_cases
@@ -49,23 +52,11 @@ class DartsBase:
         else:
             logging.debug("Darts model initialized without file store.")
 
-        self.quantiles = [
-            0.01,
-            0.025,
-            0.05,
-            0.1,
-            0.2,
-            0.3,
-            0.4,
-            0.5,
-            0.6,
-            0.7,
-            0.8,
-            0.9,
-            0.95,
-            0.975,
-            0.99,
-        ]
+        if len(self.quantiles) == self.num_samples:
+            raise ValueError(
+                "num_samples cannot be equal to the number of quantiles; "
+                "please set num_samples to None or a different value."
+            )
 
         # Training period
         if train_start_date is None:
@@ -274,37 +265,47 @@ class DartsBase:
             out["Date"] = dates
             out = out.melt(
                 id_vars="Date",
-                var_name="sample",
+                var_name="sample",  # may be quantiles, renamed later
                 value_name="prediction",
             )
             out["sample"] = out["sample"].astype(int)
             out["GID_2"] = gid
 
-            if len(out) > 1:
-                # samples to quantiles
-                out = (
-                    pd.concat(
-                        {
-                            k: sample_to_quantiles_vec(
-                                np.expm1(g["prediction"]).clip(
-                                    lower=0
-                                ),  # transform before quantiles
-                                self.quantiles,
-                            )
-                            for k, g in out.groupby(["Date", "GID_2"], observed=False)
-                        },
-                        names=["Date", "GID_2"],
+            if not self.sampling_method or self.sampling_method == "samples":
+                if len(out) > 1:
+                    # samples to quantiles
+                    out = (
+                        pd.concat(
+                            {
+                                k: sample_to_quantiles_vec(
+                                    np.expm1(g["prediction"]).clip(
+                                        lower=0
+                                    ),  # transform before quantiles
+                                    self.quantiles,
+                                )
+                                for k, g in out.groupby(
+                                    ["Date", "GID_2"], observed=False
+                                )
+                            },
+                            names=["Date", "GID_2"],
+                        )
+                        .reset_index()
+                        .rename(columns={"value": "prediction"})
+                        .drop(columns=["level_2"])
                     )
-                    .reset_index()
-                    .rename(columns={"value": "prediction"})
-                    .drop(columns=["level_2"])
-                )
+                    out["horizon"] = h + 1  # 1-based horizon
+                else:
+                    out["quantile"] = 0.5
+                    out["horizon"] = h + 1  # 1-based horizon
+                    out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
+                    out = out.drop(columns=["sample"])
+            elif self.sampling_method == "quantiles":
+                out = out.rename(columns={"sample": "quantile"})
+                out["quantile"] = out["quantile"].apply(lambda x: self.quantiles[x])
+                out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
                 out["horizon"] = h + 1  # 1-based horizon
             else:
-                out["quantile"] = 0.5
-                out["horizon"] = h + 1  # 1-based horizon
-                out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                out = out.drop(columns=["sample"])
+                raise ValueError(f"Unknown sampling_method '{self.sampling_method}'")
 
             rows.append(out)
         return rows
@@ -316,7 +317,12 @@ class DartsBase:
     ) -> pd.DataFrame:
         # Ensure Date is in original format
         freq = df["Date"].dtype.freq.freqstr[0]
-        preds["Date"] = preds["Date"].dt.to_period(freq)
+        if not pd.api.types.is_period_dtype(preds["Date"]):
+            # Coerce to period
+            preds["Date"] = preds["Date"].dt.to_period(freq)
+        elif preds["Date"].dtype.freq.freqstr != freq:
+            # Coalesce frequency
+            preds["Date"] = preds["Date"].dt.asfreq(freq)
 
         # Merge Cases back in to preds
         preds = preds.merge(
@@ -331,7 +337,7 @@ class DartsBase:
             ordered=df["GID_2"].cat.ordered,
         )
         # Return Cases to original scale
-        preds["Cases"] = np.expm1(preds["Log_Cases"])
+        preds["Cases"] = np.expm1(preds["Log_Cases"]).clip(lower=0)
         return preds
 
     def _historical_predictions_onepass(
