@@ -46,6 +46,37 @@ def test_BaselineSamples_symmetric_horizon():
     assert set(predictions.flatten()) == {8, 9, 10, 11, 12}
 
 
+# utility function
+def quantiles_are_bounded(df: pd.DataFrame, bounds: list[float]) -> bool:
+    lower, median, upper = sorted(bounds)
+    return (
+        df["prediction"].apply(lambda x: lower <= x <= upper).all()
+        and df[df["quantile"] == 0.5]["prediction"].eq(median).all()
+    )
+
+
+# Ensure utility function works as expected
+def test_quantiles_are_bounded():
+    assert quantiles_are_bounded(
+        pd.DataFrame(
+            {
+                "quantile": [0.1, 0.5, 0.9],
+                "prediction": [8, 10, 12],
+            }
+        ),
+        [8, 10, 12],
+    )
+    assert not quantiles_are_bounded(
+        pd.DataFrame(
+            {
+                "quantile": [0.1, 0.5, 0.9],
+                "prediction": [7, 10, 12],
+            }
+        ),
+        [8, 10, 12],
+    )
+
+
 def test_baseline_symmetric():
     df = pd.DataFrame(
         {
@@ -71,23 +102,30 @@ def test_baseline_symmetric():
     # Next two dates should have predictions of Cases(k-1) + [-10, 0, 10] since there
     # is a constant gradient of 10, the baseline is symmetrised e.g. [-10, 10] and we
     # take three quantiles evenly sampled without replacement e.g. [-10, 0, 10]
-    assert set(
-        df_pred[df_pred["Date"] == pd.Period("2023-04")]["prediction"].values.tolist()
-    ) == {20, 30, 40}
-    assert set(
-        df_pred[df_pred["Date"] == pd.Period("2023-05")]["prediction"].values.tolist()
-    ) == {30, 40, 50}
+    assert quantiles_are_bounded(
+        df_pred[df_pred["Date"] == pd.Period("2023-04")],
+        [20, 30, 40],
+    )
+    assert quantiles_are_bounded(
+        df_pred[df_pred["Date"] == pd.Period("2023-05")],
+        [30, 40, 50],
+    )
     # Last three should be are future forecasts (this requires the model to substitute
     # predictions for observed cases for the one-step ahead prediction, internally)
-    assert set(
-        df_pred[df_pred["Date"] == pd.Period("2023-06")]["prediction"].values.tolist()
-    ) == {40, 50, 60}
-    assert set(
-        df_pred[df_pred["Date"] == pd.Period("2023-07")]["prediction"].values.tolist()
-    ) == {40, 50, 60}  # Note that because we symmatrize, the predictions are the same
-    assert set(
-        df_pred[df_pred["Date"] == pd.Period("2023-08")]["prediction"].values.tolist()
-    ) == {40, 50, 60}  # Note that because we symmatrize, the predictions are the same
+    assert quantiles_are_bounded(
+        df_pred[df_pred["Date"] == pd.Period("2023-06")],
+        [40, 50, 60],
+    )
+    # Note that because we symmatrize, the predictions are the same
+    assert quantiles_are_bounded(
+        df_pred[df_pred["Date"] == pd.Period("2023-07")],
+        [40, 50, 60],
+    )
+    # Note that because we symmatrize, the predictions are the same
+    assert quantiles_are_bounded(
+        df_pred[df_pred["Date"] == pd.Period("2023-08")],
+        [40, 50, 60],
+    )
 
 
 def test_baseline_asymmetric():

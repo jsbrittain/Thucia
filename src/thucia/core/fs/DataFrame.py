@@ -287,7 +287,8 @@ class DataFrame:
 
             # Insert data
             con.register("df", df)
-            con.execute(f"INSERT INTO {self.table} SELECT * FROM df")
+            cols = ", ".join(df.columns)  # ensure we specify column orders
+            con.execute(f"INSERT INTO {self.table} ({cols}) SELECT * FROM df ")
             con.unregister("df")
 
     def write_df(self, df: pd.DataFrame, con=None):

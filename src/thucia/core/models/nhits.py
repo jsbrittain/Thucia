@@ -4,37 +4,43 @@ from typing import List
 from typing import Optional
 
 import pandas as pd
-from darts.models import NBEATSModel
+from darts.models import NHiTSModel
 from darts.utils.likelihood_models import GaussianLikelihood
 from thucia.core.fs import DataFrame
 
 from .darts import DartsBase
 
 
-class NBEATSSamples(DartsBase):
+# -------- NHiTS --------
+class NHiTSSamples(DartsBase):
     def __init__(self, *args, **kwargs):
+        # Model parameters
+        self.input_chunk_length = 48  # how many past steps the model can see
+        self.output_chunk_length = 1  # how many future steps the model predicts at once
+        self.dropout = 0.2  # enables MC dropout
+        self.random_state = 42  # for reproducibility
+        self.n_epochs = 150  # default 100
+        self.batch_size = 64
+
+        # Initialize model
         super().__init__(*args, **kwargs)
         self.sampling_method = "samples"
 
     def build_model(self):
-        return NBEATSModel(
-            input_chunk_length=48,
-            output_chunk_length=1,
-            generic_architecture=True,
-            num_stacks=3,
-            num_blocks=2,
-            layer_widths=192,
-            dropout=0.2,
+        return NHiTSModel(
+            input_chunk_length=self.input_chunk_length,
+            output_chunk_length=self.output_chunk_length,
+            dropout=self.dropout,
             likelihood=GaussianLikelihood(),
-            random_state=42,
-            n_epochs=150,
-            batch_size=64,
+            random_state=self.random_state,
+            n_epochs=self.n_epochs,
+            batch_size=self.batch_size,
             force_reset=True,
         )
 
     def pre_fit(self, target_gids=None, **kwargs):
         logging.info(
-            "Fitting NBEATS model on historical data "
+            "Fitting NHiTS model on historical data "
             f"({self.train_start_date} to {self.train_end_date})..."
         )
         target_list, covar_list, _ = self.get_cases(
@@ -51,7 +57,7 @@ class NBEATSSamples(DartsBase):
 
     def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
         logging.info(
-            "Generating NBEATS historical forecasts "
+            "Generating NHiTS historical forecasts "
             f"from {start_date} with retrain={retrain}..."
         )
         bt = self.model.historical_forecasts(
@@ -68,7 +74,8 @@ class NBEATSSamples(DartsBase):
         return bt
 
 
-def nbeats(
+# -------- pipeline helper --------
+def nhits(
     df: pd.DataFrame,
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
@@ -84,14 +91,15 @@ def nbeats(
     num_samples: int | None = None,
     multivariate: bool = True,
 ) -> DataFrame | pd.DataFrame:
-    """NBEATS forecasting pipeline.
+    """Temporal Fusion Transformer (NHiTS) forecasting pipeline.
 
     Returns a Thucia DataFrame if db_file is specified, otherwise a pandas DataFrame.
     """
-    logging.info("Starting NBEATS forecasting pipeline...")
+
+    logging.info("Starting NHiTS forecasting pipeline...")
 
     # Instantiate model
-    model = NBEATSSamples(
+    model = NHiTSSamples(
         df=df,
         case_col=case_col,
         covariate_cols=covariate_cols,
@@ -109,6 +117,6 @@ def nbeats(
         retrain=retrain,
         model_admin_level=model_admin_level,
     )
-    logging.info("Completed NBEATS forecasting pipeline.")
+    logging.info("Completed NHiTS forecasting pipeline.")
 
     return tdf

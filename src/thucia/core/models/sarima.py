@@ -17,13 +17,26 @@ class SarimaQuantiles(DartsBase):
         super().__init__(*args, **kwargs)
         self.sampling_method = "samples"
         self.sarima_retrain = False
+        self.method = "powell"
 
     def set_retrain(self, retrain: bool):
         self.sarima_retrain = retrain
 
+    def set_season_length(self, season_length: int):
+        self.season_length = season_length
+
+    def set_method(self, method: str):
+        self.method = method
+
     def build_model(self):
         # No global model
         return None
+
+    def remove_gid_covariate(self, cov):
+        try:
+            cov = cov.drop_columns("GID_2_codes")
+        except Exception:
+            pass
 
     def pre_fit(self, target_gids=None, **kwargs):
         # Only determine model order if not retraining
@@ -40,12 +53,17 @@ class SarimaQuantiles(DartsBase):
                 start_date=self.train_start_date,
                 end_date=self.train_end_date,
             )
-            model = AutoARIMA(season_length=12)
+            cov = self.remove_gid_covariate(covar_list[0])
+            model = AutoARIMA(season_length=self.season_length)
             model.fit(
                 target_list[0],
-                future_covariates=covar_list[0],
+                future_covariates=cov,
             )
             p, q, P, Q, s, d, D = model.model.model_["arma"]
+            s_info = f"{s}"
+            if s != self.season_length:
+                s = self.season_length
+                s_info = f"{s_info} -> 12 [adjusted]"
             self.fixed_order[target_gid] = {
                 "p": p,
                 "q": q,
@@ -58,14 +76,14 @@ class SarimaQuantiles(DartsBase):
             toc = pd.Timestamp.now()
             logging.info(
                 f"Determined SARIMA order for gid {target_gid}: "
-                f"(p,d,q)=({p},{d},{q}), (P,D,Q,s)=({P},{D},{Q},{s}) "
+                f"(p,d,q)=({p},{d},{q}), (P,D,Q,s)=({P},{D},{Q},{s_info}) "
                 f"in {toc - tic}"
             )
 
     def historical_forecasts(self, ts, cov, gid=None, start_date=None, **kwargs):
         if self.sarima_retrain:
             model = AutoARIMA(
-                season_length=12,
+                season_length=self.season_length,
             )
         else:
             if not gid:
@@ -78,9 +96,12 @@ class SarimaQuantiles(DartsBase):
                     self.fixed_order[gid]["P"],
                     self.fixed_order[gid]["D"],
                     self.fixed_order[gid]["Q"],
-                    self.fixed_order[gid]["s"],
+                    12,  # season length (AutoArima can yield 1)
                 ),
             )
+        # Remove GID covariate since SARIMA is univariate
+        cov = self.remove_gid_covariate(cov)
+        # Historical forecasts
         bt = model.historical_forecasts(
             series=ts,
             future_covariates=cov,
@@ -136,6 +157,7 @@ def sarima(
         db_file=db_file,
         multivariate=False,
     )
+    model.set_season_length(season_length=12)
     model.set_retrain(retrain)
 
     # Historical predictions
