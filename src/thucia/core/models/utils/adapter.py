@@ -1,4 +1,6 @@
 import logging
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import wait
 from dataclasses import dataclass
 from typing import List
 from typing import Optional
@@ -6,6 +8,7 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import QuantileRegressor
 from sklearn.linear_model import Ridge
 
 
@@ -100,7 +103,8 @@ class AdapterBase:
 
         # one row per timepoint: replicate per gid embedding to match residual rows
         gid_to_idx = {g: i for i, g in enumerate(gid_order)}
-        idxs = dfm[self.gid_col].map(gid_to_idx).to_numpy()
+        idxs = dfm[self.gid_col].map(gid_to_idx)
+        idxs = np.asarray(idxs.astype(int))
         X_fit = X[idxs]  # (T_total, D)
         y = dfm["residual"].to_numpy(np.float32)  # (T_total,)
 
@@ -193,7 +197,7 @@ class RidgeAdapter(AdapterBase):
         return self._ridge.predict(X).astype(np.float32)
 
 
-# ---------- Tiny MLP adapter (optional) ----------
+# ---------- Tiny MLP adapter ----------
 
 try:
     import torch
@@ -261,7 +265,95 @@ class MLPAdapter(AdapterBase):
         return out
 
 
-def residual_regression(df_model, df_predictors, method):
+# Quantile adapter
+
+
+class QuantileAdapter(AdapterBase):
+    def __init__(self, *args, quantile: float = 0.5, alpha: float = 0.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert 0.0 < quantile < 1.0
+        self.q = float(quantile)
+        self.alpha = float(alpha)
+        self._qr = None
+
+    def _fit_impl(self, X: np.ndarray, y: np.ndarray):
+        # Drop NaNs if not already filtered
+        mask = ~np.isnan(y)
+        Xf = X[mask]
+        yf = y[mask]
+
+        # Fit a linear model minimizing pinball loss
+        self._qr = QuantileRegressor(quantile=self.q, alpha=self.alpha, solver="highs")
+        self._qr.fit(Xf, yf)
+
+    def _predict_impl(self, X: np.ndarray) -> np.ndarray:
+        return self._qr.predict(X).astype(np.float32)
+
+
+def _residual_regression_fit_and_apply(df, horizon, q, df_predictors, method, window):
+    dfh = df[(df["quantile"] == q) & (df["horizon"] == horizon)]
+
+    if method == "pinball":
+        base_alpha = 1e-1  # 0=pure pinball, 1=baseline model
+        adapter = QuantileAdapter(
+            predictors_df=df_predictors,
+            standardize_y=False,
+            quantile=q,
+            alpha=base_alpha / (q * (1 - q)),  # tails need more regularisation
+        )
+
+    # Expanding window per date (strictly causal)
+    out_slices = []
+
+    # Convert once to Timestamps for robust comparisons
+    dates = dfh["Date"]
+    unique_dates = np.sort(dates.unique())
+
+    # Step over target dates
+    for d in unique_dates:
+        logging.info(f"Fitting adapter for horizon {horizon}, quantile {q}, date {d}")
+
+        # Prediction origin is target_date minus horizon (prevents Cases from
+        # leaking into the data, e.g. i+4 into an i+12 prediction)
+        origin_date = d - horizon
+        if window:
+            # Sliding window
+            mask_fit = (dates <= origin_date) & (dates > origin_date - window)
+        else:
+            # Expanding window
+            mask_fit = dates <= origin_date
+
+        # Apply correction to the target date only
+        mask_apply = dates == d
+
+        df_fit = dfh.loc[mask_fit].copy()
+        df_apply = dfh.loc[mask_apply].copy()
+
+        if df_fit.empty:
+            # Nothing to fit yet; keep predictions as-is for the first date
+            out_slices.append(df_apply)
+            continue
+
+        try:
+            adapter.fit(df=df_fit, transform=None)
+        except ValueError as e:
+            logging.warning(f"Adapter failed to fit at date {d}: {e}")
+            out_slices.append(df_apply)
+            continue
+
+        pred_df_corrected = adapter.apply(df_apply, out_col="prediction")
+        df_apply.loc[:, "prediction"] = pred_df_corrected["prediction"]
+        out_slices.append(df_apply)
+
+    df_out = pd.concat(out_slices, axis=0)
+    return df_out
+
+
+def residual_regression(
+    df_model, df_predictors, method, window=None, horizons=None, max_workers=None
+):
+    max_workers = max_workers if max_workers else 1
+
     # Prepare embeddings
     if df_predictors is None:
         logging.warning("Model predictors not provided. Skipping adapter.")
@@ -277,16 +369,25 @@ def residual_regression(df_model, df_predictors, method):
     )
 
     if method == "ridge":
-        adapter = RidgeAdapter(
-            predictors_df=df_predictors,
-            standardize_y=False,
-            alpha=2.0,
+        raise NotImplementedError(
+            "Ridge adapter not currently supported in parallel loop."
         )
+        # adapter = RidgeAdapter(
+        #     predictors_df=df_predictors,
+        #     standardize_y=False,
+        #     alpha=2.0,
+        # )
     elif method == "mlp":
-        adapter = MLPAdapter(
-            predictors_df=df_predictors,
-            standardize_y=False,
+        raise NotImplementedError(
+            "MLP adapter not currently supported in parallel loop."
         )
+        # adapter = MLPAdapter(
+        #     predictors_df=df_predictors,
+        #     standardize_y=False,
+        # )
+    elif method == "pinball":
+        # Build per quantile loop
+        pass
     else:
         raise Exception(f"Unrecognised method requested: {method}")
 
@@ -302,46 +403,39 @@ def residual_regression(df_model, df_predictors, method):
     if "quantile" not in df_work.columns:
         df_work["quantile"] = 0.5
 
-    collated = []
-    for horizon in df_work["horizon"].unique():
-        logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
-        dfh_allq = df_work[df_work["horizon"] == horizon]
-        for q in sorted(dfh_allq["quantile"].unique()):
-            dfh = dfh_allq[dfh_allq["quantile"] == q].copy()
-            # Expanding window per date (strictly causal)
-            out_slices = []
-            # Convert once to Timestamps for robust comparisons
-            dates = pd.to_datetime(dfh["Date"])
-            unique_dates = np.sort(dates.unique())
+    if not horizons:
+        horizons = df_work["horizon"].unique()
+    quantiles = sorted(df_work["quantile"].unique())
 
-            for d in unique_dates:
-                mask_fit = dates < d
-                mask_apply = dates == d
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for horizon in [1]:  # horizons:
+            # logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
+            for q in quantiles:
+                # logging.info(f"Processing quantile {q} for horizon {horizon}")
+                futures.append(
+                    executor.submit(
+                        _residual_regression_fit_and_apply,
+                        df=df_work,
+                        horizon=horizon,
+                        q=q,
+                        df_predictors=df_predictors,
+                        method=method,
+                        window=window,
+                    )
+                )
+        logging.info(f"Queued {len(futures)} processes, waiting for completion...")
+        wait(futures)
+        df_out = []
+        for future in futures:
+            try:
+                df_out.append(future.result())
+            except Exception as e:
+                logging.warning(
+                    f"Adapter processing failed for a horizon/quantile: {e}"
+                )
 
-                df_fit = dfh.loc[mask_fit].copy()
-                df_apply = dfh.loc[mask_apply].copy()
-
-                if df_fit.empty:
-                    # Nothing to fit yet; keep predictions as-is for the first date
-                    out_slices.append(df_apply)
-                    continue
-
-                try:
-                    adapter.fit(df=df_fit, transform=None)
-                except ValueError as e:
-                    logging.warning(f"Adapter failed to fit at date {d}: {e}")
-                    out_slices.append(df_apply)
-                    continue
-
-                pred_df_corrected = adapter.apply(df_apply, out_col="prediction")
-                df_apply.loc[:, "prediction"] = pred_df_corrected["prediction"]
-                out_slices.append(df_apply)
-
-            if out_slices:
-                df_out = pd.concat(out_slices, axis=0)
-                collated.append(df_out)
-
-    df_out_all = pd.concat(collated, axis=0)
+    df_out_all = pd.concat(df_out, axis=0)
 
     if log_transform:
         df_out_all["Cases"] = np.expm1(df_out_all["Cases"])

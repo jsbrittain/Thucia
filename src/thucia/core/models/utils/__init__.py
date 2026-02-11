@@ -202,20 +202,27 @@ def sanitise_covariates(df, covariate_cols, start_date):
     if isinstance(start_date, pd.Timestamp):
         freq = re.search(r"period\[(.+)\]", df["Date"].dtype.name).group(1)
         start_date = pd.to_period(start_date, freq)
+    if not start_date:
+        start_date = df["Date"].max()
 
     # Covariate sanitisation
     for c in covariate_cols:
         # NaN replacement: seasonal mean, forward and back fill
-        df[c] = df.groupby(["GID_2", df["Date"].dt.month], observed=False)[c].transform(
+        df[c] = df.groupby(["GID_2", df["Date"].dt.month])[c].transform(
             lambda s: s.fillna(s.mean())
         )
-        df[c] = df.groupby("GID_2", observed=False)[c].ffill().bfill()
+        df[c] = df.groupby("GID_2")[c].ffill().bfill()
         # Standardise using pre- start date values
         mask = df["Date"] < start_date
-        if mask.any():
+        if False:
             mu = df[mask][c].mean()
             sd = np.max([1e-8, df[mask][c].std()])
             df[c] = (df[c] - mu) / sd
+        if True:
+            # norm = np.abs(df[mask][c].mean())
+            norm = np.abs(df[mask][c]).mean()  # scale by mean absolute value
+            if norm > 1e-3:
+                df[c] = df[c] / norm
         # Sanity check
         if df[c].isna().any():
             raise Exception("NaN found in covariates")

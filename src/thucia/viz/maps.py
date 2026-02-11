@@ -43,6 +43,10 @@ def choropleth(
     value_col="Cases",
     cmap="viridis",
     aggregation="sum",
+    edgecolor="0.6",
+    linewidth=0.2,
+    legend=True,
+    symmetric_cmap=False,
 ):
     if isinstance(admin_level, int):
         admin_level = f"GID_{admin_level}"
@@ -66,9 +70,27 @@ def choropleth(
     merged = gdf.merge(df, left_on=admin_level, right_on=admin_level, how="right")
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-    merged.plot(
-        column=value_col, ax=ax, legend=True, cmap=cmap, edgecolor="0.6", linewidth=0.2
-    )
+    if symmetric_cmap:
+        lim = max(abs(merged[value_col].min()), merged[value_col].max())
+        merged.plot(
+            column=value_col,
+            ax=ax,
+            legend=legend,
+            cmap=cmap,
+            edgecolor=edgecolor,
+            linewidth=linewidth,
+            vmin=-lim,
+            vmax=lim,
+        )
+    else:
+        merged.plot(
+            column=value_col,
+            ax=ax,
+            legend=legend,
+            cmap=cmap,
+            edgecolor=edgecolor,
+            linewidth=linewidth,
+        )
     if ax is None:
         plt.show()
 

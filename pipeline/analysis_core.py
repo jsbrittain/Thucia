@@ -9,11 +9,9 @@ from thucia.core.cases import aggregate_cases
 from thucia.core.cases import cases_per_month
 from thucia.core.cases import check_index_combinations
 from thucia.core.cases import prepare_embeddings
-from thucia.core.cases import r2
 from thucia.core.cases import r2_score
 from thucia.core.cases import read_db
 from thucia.core.cases import read_nc
-from thucia.core.cases import rmse
 from thucia.core.cases import rmse_score
 from thucia.core.cases import run_job
 from thucia.core.cases import wis
@@ -24,16 +22,18 @@ from thucia.core.geo import lookup_gid1
 from thucia.core.geo import merge_sources
 from thucia.core.geo import pad_admin2
 from thucia.core.logging import enable_logging
-from thucia.core.models import filter_admin1
-from thucia.core.models import interpolate_missing_dates
 from thucia.core.models import run_model
-from thucia.core.models import set_historical_na_to_zero
 from thucia.core.models.ensemble import create_ensemble
 from thucia.core.models.utils import add_residual_quantiles
 from thucia.core.models.utils import quantiles
 from thucia.core.models.utils import residual_regression
 from thucia.core.models.utils import sanitise_covariates
 from thucia.viz import plot_ensemble_weights_over_time
+# from thucia.core.cases import r2
+# from thucia.core.cases import rmse
+# from thucia.core.models import filter_admin1
+# from thucia.core.models import interpolate_missing_dates
+# from thucia.core.models import set_historical_na_to_zero
 
 
 enable_logging(level=logging.DEBUG)
@@ -70,6 +70,7 @@ class Steps:
     plot_ensemble_weights = False
     plot_state_image = False
     plot_covars_admin2 = False
+    plot_pdfm_stats = False
 
     diagnostic_heatmap = False
     diagnostic_sarima = False
@@ -81,6 +82,7 @@ def run_pipeline(
     iso3: str,
     adm1: list[str] | None = None,
     model: str = "",
+    retrain: bool = False,
     steps: Steps = Steps(),
 ):
     path = (Path(path)).resolve()
@@ -313,18 +315,19 @@ def run_pipeline(
 
     if steps.model_fitting:  # === Prepare model inputs
         # Model parameters
-        horizon = 12  # <-- select horizon here
-        model_admin_level = 1  # <-- geo region to fit and predict model
-        start_date = pd.Period("2019-01", freq="M")  # <-- select start date here
+        horizons = [1, 6, 12]  # <-- select horizons here
+        model_admin_level = 2  # <-- geo region to fit and predict model
+        start_date = pd.Period("2010-01", freq="M")  # <-- select start date here
 
         try:
             model = getattr(models, model_filename)
         except AttributeError:
             raise ValueError(f"Model '{model}' not found in thucia.core.models")
 
-        retrain = False  # <-- retrain at each forecast date
-        multivariate = True
+        multivariate = False
         test_reduced_size = False
+
+        retrain = 12 if retrain else False  # retrain every 12th step (if enabled)
 
         # Training date is specified before preparing model inputs to ensure training
         # data is sanitised (which can alter the dataframe; we cannot currently write to
@@ -337,9 +340,17 @@ def run_pipeline(
         # Filter to selected admin-1 regions and clean data
         gid_1 = lookup_gid1(iso3=iso3, admin1_names=adm1)
         df = tdf.df
-        df = filter_admin1(df, gid_1)
-        df = interpolate_missing_dates(df)
-        df = set_historical_na_to_zero(df)
+        # df = filter_admin1(df, gid_1)
+
+        df = df[df["GID_2"] == "BRA.25.565_2"]
+        # df = df[(df['GID_2'] == 'BRA.25.565_2') | (df['GID_2'] == 'BRA.25.564_2')]
+        # df = df[df['GID_1'] == 'BRA.25_1']
+
+        # df['Date'] = df['Date'].dt.to_timestamp(how='end').dt.normalize().astype('<M8[ns]')
+        # breakpoint()
+
+        # df = interpolate_missing_dates(df)
+        # df = set_historical_na_to_zero(df)
 
         # Load and merge covariates (treat all as past covariates)
         case_col = "Log_Cases"
@@ -369,38 +380,91 @@ def run_pipeline(
         )
 
         df["pop_lag_0"] = (
-            df.groupby("GID_2", observed=False)["pop_count"]
-            .shift(0)
-            .rolling(window=3)
-            .mean()
+            df.groupby("GID_2", observed=False)["pop_count"].shift(0)
+            # .rolling(window=3)
+            # .mean()
         )
         df["log_cases_lag_1"] = df.groupby("GID_2", observed=False)["Log_Cases"].shift(
             1
         )
+        df["log_cases_12m_ma"] = (
+            df.groupby("GID_2", observed=False)["Log_Cases"]
+            .shift(1)
+            .rolling(window=12)
+            .mean()
+        )
+        df["log_cases_24m_ma"] = (
+            df.groupby("GID_2", observed=False)["Log_Cases"]
+            .shift(1)
+            .rolling(window=24)
+            .mean()
+        )
+        df["log_cases_48m_ma"] = (
+            df.groupby("GID_2", observed=False)["Log_Cases"]
+            .shift(1)
+            .rolling(window=48)
+            .mean()
+        )
+        df["log_cases_12m_cum"] = (
+            df.groupby("GID_2", observed=False)["Log_Cases"]
+            .shift(1)
+            .rolling(window=12)
+            .sum()
+        )
+        df["log_cases_cum"] = (
+            df.groupby("GID_2", observed=False)["Log_Cases"].shift(1).cumsum()
+        )
+        df["log_cases_slope"] = df["log_cases_lag_1"].diff()
+        df["log_cases_slope_6m"] = df["log_cases_lag_1"].diff().rolling(window=6).mean()
+        df["log_cases_slope_12m"] = (
+            df["log_cases_lag_1"].diff().rolling(window=12).mean()
+        )
+        df["log_cases_12m_trend"] = (
+            df.groupby("GID_2", observed=False)["Log_Cases"]
+            .shift(1)
+            .rolling(window=12)
+            .apply(lambda x: np.polyfit(np.arange(len(x)), x, 1)[0], raw=True)
+        )
+        df["sin_month"] = np.sin(2 * np.pi * df["Date"].dt.month / 12)
+        df["cos_month"] = np.cos(2 * np.pi * df["Date"].dt.month / 12)
 
         covariate_cols = [
             "tmax_lag_0",  # tmax
-            "tmax_lag_1",
-            "tmax_lag_2",
+            # "tmax_lag_1",
+            # "tmax_lag_2",
             "tmin_lag_0",  # tmin
-            "tmin_lag_1",
-            "tmin_lag_2",
+            # "tmin_lag_1",
+            # "tmin_lag_2",
             "prec_lag_0",  # prec
-            "prec_lag_1",
-            "prec_lag_2",
+            # "prec_lag_1",
+            # "prec_lag_2",
             "spi6_lag_0",  # spi6
             "oni_lag_0",  # oni
             "oni_6m_lag_0",
             "oni_12m_lag_0",
             "pop_lag_0",
             "log_cases_lag_1",  # previous cases
+            # 'log_cases_12m_ma',  # previous cases 12m moving average
+            # 'log_cases_24m_ma',
+            # 'log_cases_48m_ma',
+            # 'log_cases_12m_cum',  # previous cases 12m cumulative
+            # 'log_cases_cum',
+            # 'log_cases_slope',
+            # 'log_cases_slope_6m',
+            # 'log_cases_slope_12m',
+            #  'log_cases_12m_trend',  # previous cases 36m trend
+            # 'sin_month',
+            # 'cos_month',
         ]
         df = df[
             ["Date", "GID_1", "GID_2", "future", "Cases", case_col] + covariate_cols
         ]
 
         # Sanitise covariates (NaN replacement, seasonal mean, forward fill, back fill)
+        # df = sanitise_covariates(df, covariate_cols, None)  # "2019-01-01")  # train_end_date)
+        # df = sanitise_covariates(df, covariate_cols, "2019-01-01")
         df = sanitise_covariates(df, covariate_cols, train_end_date)
+        # df = df.ffill().bfill()
 
         write_db(df, path / "model_input_data")
 
@@ -421,14 +485,14 @@ def run_pipeline(
         check_index_combinations(tdf, ["Date", "GID_2"])
 
         # Model name and path
-        name = f"{model.__name__}_h{horizon}"
+        name = f"{model.__name__}"
         db_file = path / f"{name}_cases_quantiles.duckdb"
 
         # Model parameters
         model_kwargs = {
             "start_date": start_date,
             "gid_1": gid_1,
-            "horizon": horizon,
+            "horizons": horizons,
             "case_col": case_col,
             "covariate_cols": covariate_cols,
             "model_admin_level": model_admin_level,  # 0=country, 1=state, 2=municipality
@@ -438,6 +502,7 @@ def run_pipeline(
             models.tcn,
             models.tft,
             models.nbeats,
+            models.nhits,
             models.xgboost,
             models.chronos,
         ]:
@@ -479,25 +544,30 @@ def run_pipeline(
     if (
         steps.timesfm_quantiles
     ):  # === Convert TimesFM deterministic output to quantiles by residual sampling
-        horizon = 12
-
         filename = model_filename
         df_model = read_db(path / f"{filename}_cases_quantiles").df
+        if "quantile" in df_model.columns:
+            # Reduce to median if distribution provided
+            df_model = df_model[df_model["quantile"] == 0.5]
         df_model = add_residual_quantiles(
             df_model,
             window=None,
             min_history=2,
             quantile_levels=quantiles,
-            db_file=path / f"{filename}_cases_quantiles_q",
+            db_file=path / f"{filename}_cases_quantiles_q.duckdb",
         )
 
     if steps.pdfm_residual_regression:  # === Residual regression with PDFM embeddings
         filename = model_filename
+        method = "pinball"  # 'ridge', 'mlp', 'pinball'
+        sliding_window = 24  # None for expanding window
 
         df_model = read_db(path / f"{filename}_cases_quantiles").df
 
         pdfm_filename = path / "embeddings.nc"
-        pdfm_df = prepare_embeddings(pdfm_filename) if pdfm_filename.exists() else None
+        if not pdfm_filename.exists():
+            raise FileNotFoundError(f"PDFM embeddings file not found: {pdfm_filename}")
+        pdfm_df = prepare_embeddings(pdfm_filename)
 
         # Match provinces with embeddings
         provinces = df_model["GID_2"].unique().tolist()
@@ -505,27 +575,63 @@ def run_pipeline(
         pdfm_df = pdfm_df[~pdfm_df["GID_2"].duplicated()]
         df_model = df_model[df_model["GID_2"].isin(pdfm_df["GID_2"])]
 
-        logging.info("Residual regression with all PDFM features")
-        df_model_pdfm = residual_regression(df_model, pdfm_df, method="ridge")
-        write_db(df_model_pdfm, path / f"{filename}_pdfmrr_cases_quantiles")
+        mode = "standard"
+        if mode == "standard":
+            logging.info(f"Residual regression with all PDFM features ({mode})")
+            df_model_pdfm = residual_regression(
+                df_model, pdfm_df, method=method, window=sliding_window, max_workers=4
+            )
+            write_db(
+                df_model_pdfm, path / f"{filename}_pdfmrr_{method}_cases_quantiles"
+            )
+        elif mode == "noise":
+            df_model = df_model[df_model["horizon"] == 6]  # <-- select horizon here
+            np.random.seed(42)
+            for rep in range(100):
+                # Replace features with noise
+                pdfm_df.loc[:, pdfm_df.columns.str.contains("feature")] = (
+                    np.random.normal(
+                        0,
+                        1,
+                        size=pdfm_df.loc[
+                            :, pdfm_df.columns.str.contains("feature")
+                        ].shape,
+                    )
+                )
 
-        # Aggregated Search Trends
-        logging.info("Residual regression with PDFM features: Aggregated Search Trends")
-        cols = ["GID_2", *[f"feature{k}" for k in range(128)]]
-        df_model_pdfm = residual_regression(df_model, pdfm_df[cols], method="ridge")
-        write_db(df_model_pdfm, path / f"{filename}_pdfmrr1_cases_quantiles")
+                logging.info(
+                    f"Residual regression with all PDFM features ({mode} rep {rep})"
+                )
+                df_model_pdfm = residual_regression(df_model, pdfm_df, method=method)
+                write_db(
+                    df_model_pdfm,
+                    path / f"{filename}_pdfmrr_{mode}{rep}_cases_quantiles",
+                )
+        else:
+            raise ValueError(f"Unknown PDFM residual regression mode: {mode}")
 
-        # Maps and Busyness
-        logging.info("Residual regression with PDFM features: Maps and Busyness")
-        cols = ["GID_2", *[f"feature{128 + k}" for k in range(128)]]
-        df_model_pdfm = residual_regression(df_model, pdfm_df[cols], method="ridge")
-        write_db(df_model_pdfm, path / f"{filename}_pdfmrr2_cases_quantiles")
+        if False:
+            # Aggregated Search Trends
+            logging.info(
+                "Residual regression with PDFM features: Aggregated Search Trends"
+            )
+            cols = ["GID_2", *[f"feature{k}" for k in range(128)]]
+            df_model_pdfm = residual_regression(df_model, pdfm_df[cols], method="ridge")
+            write_db(df_model_pdfm, path / f"{filename}_pdfmrr1_cases_quantiles")
 
-        # Weather & Air Quality
-        logging.info("Residual regression with PDFM features: Weather & Air Quality")
-        cols = ["GID_2", *[f"feature{256 + k}" for k in range(74)]]
-        df_model_pdfm = residual_regression(df_model, pdfm_df[cols], method="ridge")
-        write_db(df_model_pdfm, path / f"{filename}_pdfmrr3_cases_quantiles")
+            # Maps and Busyness
+            logging.info("Residual regression with PDFM features: Maps and Busyness")
+            cols = ["GID_2", *[f"feature{128 + k}" for k in range(128)]]
+            df_model_pdfm = residual_regression(df_model, pdfm_df[cols], method="ridge")
+            write_db(df_model_pdfm, path / f"{filename}_pdfmrr2_cases_quantiles")
+
+            # Weather & Air Quality
+            logging.info(
+                "Residual regression with PDFM features: Weather & Air Quality"
+            )
+            cols = ["GID_2", *[f"feature{256 + k}" for k in range(74)]]
+            df_model_pdfm = residual_regression(df_model, pdfm_df[cols], method="ridge")
+            write_db(df_model_pdfm, path / f"{filename}_pdfmrr3_cases_quantiles")
 
     if steps.diagnostic_heatmap:  # === Diagnostic heatmap (dates/regions)
         # TimesFM outliers:
@@ -598,114 +704,141 @@ def run_pipeline(
             "sarima_h12_pdfmrr",
             "tcn_h12",
             "tcn_h12_pdfmrr",
-            "tft_h12",
-            "tft_h12_pdfmrr",
+            # "tft_h12",
+            # "tft_h12_pdfmrr",
             "xgboost_h12",
             "xgboost_h12_pdfmrr",
             "nbeats_h12",
             "nbeats_h12_pdfmrr",
-            "timesfm2_h12",
-            "timesfm2_h12_pdfmrr",
-            "ensemble2_h12",
-            "ensemble2_h12_pdfmrr",
+            "timesfm_h12",
+            "timesfm_h12_pdfmrr",
+            # "ensemble2_h12",
+            # "ensemble2_h12_pdfmrr",
         ]
-        horizon = 12
+        horizons = [1, 3, 6, 12]
 
-        out = []
-        out_all = []
+        # threshold = 1e6
+
+        # out = []
+        # out_all = []
         for model in model_list:
-            df_model0 = read_nc(str(path / f"{model}_cases_quantiles.nc"))
+            df_model0 = read_db(str(path / f"{model}_cases_quantiles"))
+            wis_models = []
 
-            for h in range(1, horizon + 1):
+            for h in horizons:
                 logging.info(f"Calculating statistics for model: {model}, horizon: {h}")
                 # Filter once
-                df_model = df_model0.copy()
+                df_model = df_model0[df_model0["horizon"] == h].copy()  # index into tdf
+                # if False:  # threshold > 0:
+                #     gid2_outliers = (
+                #         df_model[
+                #             df_model["prediction"] > threshold
+                #         ]["GID_2"].unique()
+                #     )
+                #     if len(gid2_outliers) > 0:
+                #         logging.warning(
+                #             f"Model {model} - Horizon {h} - Predictions > {threshold} for GIDs: {gid2_outliers}"
+                #         )
+                #         for gid in gid2_outliers:
+                #             df_model["prediction"] = df_model.apply(
+                #                 lambda row: np.nan
+                #                 if row["GID_2"] == gid
+                #                 else row["prediction"],
+                #                 axis=1,
+                #             )
                 df_model["prediction"] = np.log1p(df_model["prediction"])
                 df_model["Cases"] = np.log1p(df_model["Cases"])
-                df_model = df_model[
-                    (df_model["horizon"] == h) & (df_model["quantile"] == 0.5)
-                ]
                 # Compute metrics
-                r2_flat = r2(
-                    df_model,
-                    "prediction",
-                    "Cases",
-                    group_col=None,
-                    transform=None,
-                    df_filter=None,
-                )
-                r2_model = r2(
-                    df_model,
-                    "prediction",
-                    "Cases",
-                    group_col="GID_2",
-                    transform=None,
-                    df_filter=None,
-                )
-                rmse_flat = rmse(
-                    df_model,
-                    "prediction",
-                    "Cases",
-                    group_col=None,
-                    transform=None,
-                    df_filter=None,
-                )
-                rmse_model = rmse(
-                    df_model,
-                    "prediction",
-                    "Cases",
-                    group_col="GID_2",
-                    transform=None,
-                    df_filter=None,
-                )
                 wis_model = wis(
                     df_model,
                     "prediction",
                     "Cases",
                     transform=None,
                     df_filter=None,
-                )["WIS"]
-                out.append(
-                    {
-                        "model": model,
-                        "horizon": h,
-                        "r2_flat": r2_flat,
-                        "r2_mean": r2_model.mean(),
-                        "r2_std": r2_model.std(),
-                        "r2_q25": r2_model.quantile(0.25),
-                        "r2_q50": r2_model.quantile(0.50),
-                        "r2_q75": r2_model.quantile(0.75),
-                        "rmse_flat": np.expm1(rmse_flat),
-                        "rmse_mean": np.expm1(rmse_model).mean(),
-                        "rmse_std": np.expm1(rmse_model).std(),
-                        "rmse_q25": np.expm1(rmse_model).quantile(0.25),
-                        "rmse_q50": np.expm1(rmse_model).quantile(0.50),
-                        "rmse_q75": np.expm1(rmse_model).quantile(0.75),
-                        "wis_mean": wis_model.mean(),
-                        "wis_std": wis_model.std(),
-                        "wis_q25": wis_model.quantile(0.25),
-                        "wis_q50": wis_model.quantile(0.50),
-                        "wis_q75": wis_model.quantile(0.75),
-                    }
                 )
-                out_all.append(
-                    {
-                        "model": model,
-                        "horizon": h,
-                        "r2": r2_model.values,
-                        "rmse_flat": np.expm1(rmse_model).values,
-                        "wis": wis_model.values,
-                    }
-                )
-            print(pd.DataFrame(out))
-        df = pd.DataFrame(out)
-        df_all = pd.DataFrame(out_all)
-        print(df)
-        if save_them:
-            df.to_csv(path / "model_performance.csv", index=False)
-            df_all.to_csv(path / "model_performance_all.csv", index=False)
-        else:
-            breakpoint()
+                wis_model["horizon"] = h
+                wis_models.append(wis_model)
+                # breakpoint()
+                # # Median-only metrics
+                # df_model = df_model[df_model["quantile"] == 0.5]
+                # # Compute metrics
+                # r2_flat = r2(
+                #     df_model,
+                #     "prediction",
+                #     "Cases",
+                #     group_col=None,
+                #     transform=None,
+                #     df_filter=None,
+                # ).astype(float)
+                # r2_model = r2(
+                #     df_model,
+                #     "prediction",
+                #     "Cases",
+                #     group_col="GID_2",
+                #     transform=None,
+                #     df_filter=None,
+                # ).astype(float)
+                # rmse_flat = rmse(
+                #     df_model,
+                #     "prediction",
+                #     "Cases",
+                #     group_col=None,
+                #     transform=None,
+                #     df_filter=None,
+                # ).astype(float)
+                # rmse_model = rmse(
+                #     df_model,
+                #     "prediction",
+                #     "Cases",
+                #     group_col="GID_2",
+                #     transform=None,
+                #     df_filter=None,
+                # ).astype(float)
+                # out.append(
+                #     {
+                #         "model": model,
+                #         "horizon": h,
+                #         "r2_flat": r2_flat,
+                #         "r2_mean": r2_model.mean(),
+                #         "r2_std": r2_model.std(),
+                #         "r2_q25": r2_model.quantile(0.25),
+                #         "r2_q50": r2_model.quantile(0.50),
+                #         "r2_q75": r2_model.quantile(0.75),
+                #         "rmse_flat": np.expm1(rmse_flat),
+                #         "rmse_mean": np.expm1(rmse_model).mean(),
+                #         "rmse_std": np.expm1(rmse_model).std(),
+                #         "rmse_q25": np.expm1(rmse_model).quantile(0.25),
+                #         "rmse_q50": np.expm1(rmse_model).quantile(0.50),
+                #         "rmse_q75": np.expm1(rmse_model).quantile(0.75),
+                #         "wis_mean": wis_model['WIS'].mean(),
+                #         "wis_std": wis_model['WIS'].std(),
+                #         "wis_q25": wis_model['WIS'].quantile(0.25),
+                #         "wis_q50": wis_model['WIS'].quantile(0.50),
+                #         "wis_q75": wis_model['WIS'].quantile(0.75),
+                #     }
+                # )
+                # out_all.append(
+                #     {
+                #         "model": model,
+                #         "horizon": h,
+                #         "r2": r2_model.values,
+                #         "rmse_flat": np.expm1(rmse_model).values,
+                #         "wis": wis_model.values,
+                #     }
+                # )
+
+            wis_model = pd.concat(wis_models, ignore_index=True)
+            wis_model.to_csv(path / f"{model}_wis.csv", index=False)
+
+        #     print(pd.DataFrame(out))
+        # df = pd.DataFrame(out)
+        # df_all = pd.DataFrame(out_all)
+        # print(df)
+        # if save_them:
+        #     df.to_csv(path / "model_performance.csv", index=False)
+        #     df_all.to_csv(path / "model_performance_all.csv", index=False)
+        # else:
+        #     breakpoint()
 
     if steps.plot_ensemble_weights:  # === Plot ensemble weights over time
         # Plot ensemble weights
@@ -770,36 +903,41 @@ def run_pipeline(
         static_geo = set(static_geo)
         print(f"Geo regions with static covariates: {static_geo}")
 
-    if steps.plot_model_predictions:  # === Plot model predictions for selected models
+    if (
+        steps.plot_model_predictions
+    ):  # === Plot model predictions against observed cases
         import seaborn as sns
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
 
+        # transform = lambda x: x
+        transform = np.log1p
+
         sns.set_theme(style="whitegrid")
         plt.figure(figsize=(12, 6))
 
-        # outlier_threshold = 1e6
+        def plot_model_predictions(models_to_plot, horizon, transform=None):
+            def _transform(x):
+                return x
 
-        def plot_model_predictions(models_to_plot, horizon):
-            # Get case count from first model
+            transform = transform if transform is not None else _transform
+
+            # Get case count from cases_with_climate
             filestem = models_to_plot[list(models_to_plot.keys())[0]]
-            df_model = read_db(str(path / f"{filestem}_cases_quantiles")).df
-            df_model["Date"] = df_model["Date"].dt.to_timestamp(how="end")
-            df_plot = df_model[df_model["quantile"] == 0.5]
-            if "horizon" in df_plot:
-                df_plot = df_plot[df_plot["horizon"] == horizon]
+            df_model = read_db(str(path / "cases_with_climate")).df
+            print(df_model)
+            df_model = df_model[df_model["GID_2"] == "BRA.25.565_2"]
+            if isinstance(df_model["Date"].dtype, pd.PeriodDtype):
+                # Plot at month end (matches end-of-month timestamp at, e.g. 2019-01-31)
+                df_model["Date"] = (
+                    df_model["Date"].dt.to_timestamp() + pd.offsets.MonthEnd()
+                )
+            df_plot = df_model
             df_plot = (
                 df_plot.groupby("Date")
-                .agg({"Cases": "sum", "prediction": "sum"})
+                .agg({"Cases": "sum"})
+                .apply(transform)
                 .reset_index()
-            )
-            plt.fill_between(
-                df_plot["Date"],
-                0,
-                df_plot["Cases"],
-                color="grey",
-                alpha=0.5,
-                label="Observed",
             )
             plt.plot(
                 df_plot["Date"],
@@ -809,25 +947,49 @@ def run_pipeline(
                 label="Observed",
             )
 
+            # # Get case count from first model
+            # filestem = models_to_plot[list(models_to_plot.keys())[0]]
+            # df_model = read_db(str(path / f"{filestem}_cases_quantiles"))
+            # print(df_model)
+            # df_model = df_model[df_model['GID_2'] == 'BRA.25.565_2']
+            # if isinstance(df_model['Date'].dtype, pd.PeriodDtype):
+            #     # Plot at month end (matches end-of-month timestamp at, e.g. 2019-01-31)
+            #     df_model['Date'] = df_model['Date'].dt.to_timestamp() + pd.offsets.MonthEnd()
+            # df_plot = df_model[df_model["quantile"] == 0.5]
+            # if "horizon" in df_plot:
+            #     df_plot = df_plot[df_plot["horizon"] == horizon]
+            # df_plot = (
+            #     df_plot.groupby("Date")
+            #     .agg({"Cases": "sum", "prediction": "sum"})
+            #     .apply(transform)
+            #     .reset_index()
+            # )
+            # plt.fill_between(
+            #     df_plot["Date"],
+            #     0,
+            #     df_plot["Cases"],
+            #     color="grey",
+            #     alpha=0.5,
+            #     label="Observed",
+            # )
+            # plt.plot(
+            #     df_plot["Date"],
+            #     transform(df_plot["Cases"]),
+            #     color="black",
+            #     linewidth=2,
+            #     label="Observed",
+            # )
+
             for model, filestem in models_to_plot.items():
+                print(model)
+                print(filestem)
                 try:
                     df_model = read_db(str(path / f"{filestem}_cases_quantiles")).df
-                    df_model["Date"] = df_model["Date"].dt.to_timestamp(how="end")
-
-                    # reject_gids = (
-                    #     df_model[df_model["prediction"] > outlier_threshold]["GID_2"]
-                    #     .unique()
-                    #     .tolist()
-                    # )
-                    reject_gids = []
-                    keep_gids = set(df_model["GID_2"].unique().tolist()) - set(
-                        reject_gids
-                    )
-                    df_model = df_model[df_model["GID_2"].isin(keep_gids)]
-                    if reject_gids:
-                        print(
-                            f"Model {model} horizon {horizon} "
-                            f"excluding outlier GIDs: {reject_gids}"
+                    df_model = df_model[df_model["GID_2"] == "BRA.25.565_2"]
+                    if isinstance(df_model["Date"].dtype, pd.PeriodDtype):
+                        # Plot at month end (matches end-of-month timestamp at, e.g. 2019-01-31)
+                        df_model["Date"] = (
+                            df_model["Date"].dt.to_timestamp() + pd.offsets.MonthEnd()
                         )
                 except FileNotFoundError:
                     print(f"File not found for model {filestem}, skipping...")
@@ -836,64 +998,91 @@ def run_pipeline(
                 df_plot = df_model[
                     (df_model["quantile"] == 0.5) & (df_model["horizon"] == horizon)
                 ]
+                df_plot_q05 = df_model[
+                    (df_model["quantile"] == 0.05) & (df_model["horizon"] == horizon)
+                ]
+                df_plot_q95 = df_model[
+                    (df_model["quantile"] == 0.95) & (df_model["horizon"] == horizon)
+                ]
                 # Take average over all provinces
+                plt.fill_between(
+                    df_plot_q05.groupby("Date")["prediction"].sum().index,
+                    transform(df_plot_q05.groupby("Date")["prediction"].sum().values),
+                    transform(df_plot_q95.groupby("Date")["prediction"].sum().values),
+                    alpha=0.3,
+                    label=f"IQR {model}",
+                )
                 df_plot = (
                     df_plot.groupby("Date")
                     .agg({"Cases": "sum", "prediction": "sum"})
+                    .apply(transform)
                     .reset_index()
                 )
                 plt.plot(df_plot["Date"], df_plot["prediction"], label=model)
-            # plt.ylim(0, 5e6)
+                # Calculate WIS
+                wis_model = wis(
+                    df_model[
+                        (df_model["horizon"] == horizon)
+                        & (df_model["Date"] >= "2024-01-01")
+                        & (df_model["Cases"].notna())
+                    ],
+                    "prediction",
+                    "Cases",
+                    transform=transform,
+                    df_filter=None,
+                )["WIS"].mean()  # avg over provinces
+                plt.title(f"{horizon}-months ahead, WIS={wis_model}")
+            # plt.ylim(0, 5e5)
 
-        plt.subplot(3, 1, 1)
-        if model_filename:
+        if False:
+            # Plot models against each other
             models_to_plot = {
-                model_filename.split("_")[0].upper(): model_filename,
+                "SARIMA": "sarima_h12",
+                "TCN": "tcn_h12",
+                "TFT": "tft_h12",
+                "XGBoost": "xgboost_h12",
+                "N-BEATS": "nbeats_h12",
+                "TimesFM": "timesfm_h12",
+                "Ensemble": "ensemble_h12",
             }
         else:
-            raise ValueError("Please specify a model filename to plot.")
-        # if True:
-        #     # Plot models against each other
-        #     models_to_plot = {
-        #         # "SARIMA": "sarima_h12",
-        #         "TCN": "tcn_h12",
-        #         # "TFT": "tft_h12",
-        #         # "XGBoost": "xgboost_h12",
-        #         # "N-BEATS": "nbeats_h12",
-        #         "TimesFM": "timesfm_h12",
-        #         # "Ensemble": "ensemble2_h12",
-        #     }
-        # else:
-        #     # Plot models with/without PDFM residual regression
-        #     filestem = "timesfm"
-        #     models_to_plot = {
-        #         "timesfm": "timesfm_h12",
-        #         # "timesfm_pdfm": "timesfm2_h12_pdfmrr",
-        #     }
-        plot_model_predictions(models_to_plot, horizon=1)
+            # Plot models with/without PDFM residual regression
+            filestem = "tcn"
+            models_to_plot = {
+                # "timesfm": "timesfm_h12",
+                # "timesfm_pdfm": "timesfm_h12_pdfmrr",
+                # 'tcn': 'tcn_orig_h12',
+                model_filename: model_filename,
+                # 'nbeats (orig)': 'nbeats_orig_h12',
+                # 'nhits_pdfm_ridge': 'nhits_pdfmrr_ridge',
+                # 'nhits_pdfm_pinball': 'nhits_pdfmrr_pinball',
+            }
+
+        plt.subplot(3, 1, 1)
+        plot_model_predictions(models_to_plot, horizon=1, transform=transform)
         ax = plt.gca()
         ax.tick_params(axis="x", which="both", labelbottom=False)
         ax.xaxis.set_major_locator(mdates.YearLocator())
-        plt.xlim([pd.to_datetime("2020-01-01"), pd.to_datetime("2026-06-01")])
-        plt.title("1-month ahead")
+        # plt.xlim([pd.to_datetime("2016-01-01"), pd.to_datetime("2026-06-01")])
+        # plt.title("1-month ahead")
 
         plt.subplot(3, 1, 2)
-        plot_model_predictions(models_to_plot, horizon=6)
+        plot_model_predictions(models_to_plot, horizon=6, transform=transform)
         ax = plt.gca()
         ax.tick_params(axis="x", which="both", labelbottom=False)
         ax.xaxis.set_major_locator(mdates.YearLocator())
-        plt.title("6-months ahead")
-        plt.xlim([pd.to_datetime("2020-01-01"), pd.to_datetime("2026-06-01")])
+        # plt.title("6-months ahead")
+        # plt.xlim([pd.to_datetime("2016-01-01"), pd.to_datetime("2026-06-01")])
         plt.legend()
         plt.ylabel("Total cases")
 
         plt.subplot(3, 1, 3)
-        plot_model_predictions(models_to_plot, horizon=12)
+        plot_model_predictions(models_to_plot, horizon=12, transform=transform)
         ax = plt.gca()
         ax.xaxis.set_major_locator(mdates.YearLocator())
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-        plt.xlim([pd.to_datetime("2020-01-01"), pd.to_datetime("2026-06-01")])
-        plt.title("12-months ahead")
+        # plt.xlim([pd.to_datetime("2016-01-01"), pd.to_datetime("2026-06-01")])
+        # plt.title("12-months ahead")
 
         plt.show()
 
@@ -1057,16 +1246,16 @@ def run_pipeline(
             "sarima_h12_pdfmrr",
             "tcn_h12",
             "tcn_h12_pdfmrr",
-            "tft_h12",
-            "tft_h12_pdfmrr",
+            # "tft_h12",
+            # "tft_h12_pdfmrr",
             "xgboost_h12",
             "xgboost_h12_pdfmrr",
             "nbeats_h12",
             "nbeats_h12_pdfmrr",
             "timesfm_h12",
             "timesfm_h12_pdfmrr",
-            "ensemble_h12",
-            "ensemble_h12_pdfmrr",
+            # "ensemble_h12",
+            # "ensemble_h12_pdfmrr",
         ]
         horizon = 12
 
@@ -1076,7 +1265,7 @@ def run_pipeline(
             return np.log1p(x)
 
         for model in model_list:
-            df_model0 = read_nc(str(path / f"{model}_cases_quantiles.nc"))
+            df_model0 = read_db(str(path / f"{model}_cases_quantiles"))
             for h in range(1, horizon + 1):
                 logging.info(f"Calculating statistics for model: {model}, horizon: {h}")
                 df_plot = df_model0[
@@ -1541,6 +1730,141 @@ def run_pipeline(
         )
         plt.show()
 
+    if steps.plot_pdfm_stats:
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from thucia.viz.maps import choropleth, hex_cartogram
+
+        model_name = "tcn_h12"
+
+        start_date = pd.Period("2020-01")
+
+        fig, axs = plt.subplots(4, 3, figsize=(12, 6))
+
+        def read_wis(filename):
+            df = pd.read_csv(filename)
+            df["Date"] = pd.PeriodIndex(df["Date"], freq="M")
+            df = df[df["Date"] >= start_date]
+            df = df[df["Cases"].notna()]
+            return df
+
+        df_model = read_wis(path / f"{model_name}_wis.csv")
+        df_pdfm = read_wis(path / f"{model_name}_pdfmrr_wis.csv")
+
+        # Merge WIS based on GID_2, Date and horizon
+        df_diff = pd.merge(
+            df_pdfm,
+            df_model,
+            on=["GID_2", "Date", "horizon"],
+            suffixes=("_pdfm", "_base"),
+        )
+        df_diff.rename(columns={"Cases_pdfm": "Cases"}, inplace=True)
+        df_diff.drop(columns=["Cases_base"], inplace=True)
+        df_diff["Cases"] = np.expm1(df_diff["Cases"])  # LogCases -> Cases
+        df_diff["Cases"] = df_diff["Cases"] / 1e4  # Cases -> /10k
+        df_diff["WIS_diff"] = df_diff["WIS_pdfm"] - df_diff["WIS_base"]
+        gid_parts = df_diff["GID_2"].str.split(".", n=2)
+        df_diff["GID_1"] = (
+            gid_parts.str[0]
+            + "."
+            + gid_parts.str[1]
+            + gid_parts.str[2].str.split("_").str[1]
+        )
+
+        # Plot cases count
+        choropleth(
+            df_diff[df_diff["horizon"] == 1],
+            ax=axs[0][0],
+            admin_level=2,
+            value_col="Cases",
+            cmap="viridis",
+            aggregation="sum",
+            edgecolor=None,
+            linewidth=0,
+        )
+        for spine in axs[0][0].spines.values():
+            spine.set_visible(False)
+        axs[0][0].set_xticks([])
+        axs[0][0].set_yticks([])
+        axs[0][0].set_ylabel("Total Cases (x10k)")
+        axs[0][1].axis("off")
+        axs[0][2].axis("off")
+
+        for col, horizon in enumerate([1, 6, 12]):
+            df_h = df_diff[df_diff["horizon"] == horizon]
+
+            # WIS plot
+            choropleth(
+                df_h,
+                ax=axs[col + 1][0],
+                admin_level=2,
+                value_col="WIS_pdfm",
+                cmap="viridis",
+                aggregation="mean",
+                edgecolor=None,
+                linewidth=0,
+            )
+            for spine in axs[col + 1][0].spines.values():
+                spine.set_visible(False)
+            axs[col + 1][0].set_xticks([])
+            axs[col + 1][0].set_yticks([])
+            axs[col + 1][0].set_ylabel(f"WIS w/PDFM (h={horizon})")
+
+            # WIS difference plot
+            choropleth(
+                df_h,
+                ax=axs[col + 1][1],
+                admin_level=2,
+                value_col="WIS_diff",
+                cmap="RdYlGn",
+                symmetric_cmap=True,
+                aggregation="mean",
+                edgecolor=None,
+                linewidth=0,
+            )
+            for spine in axs[col + 1][1].spines.values():
+                spine.set_visible(False)
+            axs[col + 1][1].set_xticks([])
+            axs[col + 1][1].set_yticks([])
+            axs[col + 1][1].set_ylabel("ΔWIS (PDFM - Base)")
+
+            # Scatter plot of WIS
+            df_gid = (
+                df_h.groupby("GID_2")
+                .agg({"WIS_base": "mean", "WIS_pdfm": "mean"})
+                .reset_index()
+            )
+            p = axs[col + 1][2]
+            p.scatter(
+                np.log1p(df_gid["WIS_base"]),
+                np.log1p(df_gid["WIS_pdfm"]),
+                alpha=0.5,
+                label="WIS",
+            )
+            max_val = max(p.get_xlim()[1], p.get_ylim()[1])
+            if max_val:
+                p.plot([0, max_val], [0, max_val], color="black", linestyle="--")
+                p.set_xlim(0, max_val)
+                p.set_ylim(0, max_val)
+            p.set_xlabel("$log(WIS_{Base})$")
+            if col == 2:
+                p.set_ylabel("$log(WIS_{PDFM})$")
+            p.set_aspect("equal")
+            p.set_box_aspect(1)
+
+            # hex_cartogram(
+            #     df_diff,
+            #     ax=axs[row][1],
+            #     admin_level=2,
+            #     value_col="WIS_delta",
+            #     side_length_km=20.0,
+            #     cmap="viridis",
+            #     aggregation="mean",
+            # )
+
+        plt.show()
+
 
 def run_bra_acra(steps):
     iso3 = "BRA"
@@ -1611,6 +1935,11 @@ if __name__ == "__main__":
         default="all",
         help="Pipeline steps to run, comma-separated (default: all)",
     )
+    parser.add_argument(
+        "--retrain",
+        action="store_true",
+        help="Whether to retrain models",
+    )
     args = parser.parse_args()
 
     # Define steps
@@ -1629,5 +1958,6 @@ if __name__ == "__main__":
         iso3=args.iso,
         adm1=args.adm1.split(",") if args.adm1 else None,
         model=args.model,
+        retrain=args.retrain,
         steps=steps,
     )

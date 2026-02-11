@@ -5,10 +5,29 @@ from typing import Optional
 
 import pandas as pd
 from darts.models import NHiTSModel
-from darts.utils.likelihood_models import GaussianLikelihood
+from darts.utils.likelihood_models import QuantileRegression
 from thucia.core.fs import DataFrame
 
 from .darts import DartsBase
+
+
+quantiles = [
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    0.95,
+    0.975,
+    0.99,
+]
 
 
 # -------- NHiTS --------
@@ -20,22 +39,22 @@ class NHiTSSamples(DartsBase):
         self.dropout = 0.2  # enables MC dropout
         self.random_state = 42  # for reproducibility
         self.n_epochs = 150  # default 100
-        self.batch_size = 64
+        # self.batch_size = 64
 
         # Initialize model
         super().__init__(*args, **kwargs)
-        self.sampling_method = "samples"
+        self.sampling_method = "quantiles"
 
-    def build_model(self):
+    def build_model(self, horizon):
         return NHiTSModel(
             input_chunk_length=self.input_chunk_length,
-            output_chunk_length=self.output_chunk_length,
+            output_chunk_length=horizon,
             dropout=self.dropout,
-            likelihood=GaussianLikelihood(),
+            likelihood=QuantileRegression(quantiles),
             random_state=self.random_state,
             n_epochs=self.n_epochs,
-            batch_size=self.batch_size,
-            force_reset=True,
+            # batch_size=self.batch_size,
+            # force_reset=True,
         )
 
     def pre_fit(self, target_gids=None, **kwargs):
@@ -55,7 +74,9 @@ class NHiTSSamples(DartsBase):
             verbose=True,
         )
 
-    def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+    def historical_forecasts(
+        self, ts, cov, horizon, start_date=None, retrain=True, **kwargs
+    ):
         logging.info(
             "Generating NHiTS historical forecasts "
             f"from {start_date} with retrain={retrain}..."
@@ -63,13 +84,14 @@ class NHiTSSamples(DartsBase):
         bt = self.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
-            forecast_horizon=self.horizon,
+            forecast_horizon=horizon,
             start=start_date,
             stride=1,
             retrain=retrain,
-            last_points_only=False,  # this changes the output format
+            last_points_only=True,  # this changes the output format
             verbose=False,
-            num_samples=self.num_samples,
+            num_samples=1,
+            predict_likelihood_parameters=True,
         )
         return bt
 
@@ -82,7 +104,7 @@ def nhits(
     train_start_date: str | pd.Timestamp = pd.Timestamp.min,
     train_end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
-    horizon: int = 1,
+    horizons: int = 1,
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
@@ -103,7 +125,7 @@ def nhits(
         df=df,
         case_col=case_col,
         covariate_cols=covariate_cols,
-        horizon=horizon,
+        horizons=horizons,
         num_samples=num_samples,
         db_file=db_file,
         train_start_date=train_start_date,

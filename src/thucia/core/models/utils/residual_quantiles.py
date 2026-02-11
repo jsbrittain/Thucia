@@ -108,11 +108,9 @@ def add_residual_quantiles(
                             gid_col: g,
                             horizon_col: h,
                             "quantile": float(q),
-                            pred_col: np.expm1(float(v)).clip(lower=0.0),
+                            pred_col: np.expm1(float(v)).clip(min=0.0),
                             y_col: df_apply[y_col].iloc[i],
-                            "Cases": np.expm1(df_apply["Cases"].iloc[i]).clip(
-                                lower=0.0
-                            ),
+                            "Cases": np.expm1(df_apply["Cases"].iloc[i]).clip(min=0.0),
                         }
                     )
 

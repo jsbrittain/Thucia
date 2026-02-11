@@ -301,12 +301,13 @@ def wis(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict 
         pred_col=pred_col,
         obs_col=true_col,
         log1p_scale=False,
-        clamp_negative_to_zero=True,
+        clamp_negative_to_zero=(not transform),
         monotonic_fix=True,
     )
     # Average over Date
-    wis_gid = wis.groupby("GID_2").mean().reset_index()
-    return wis_gid
+    # wis_gid = wis.groupby("GID_2").mean().reset_index()
+    # wis_gid = wis_gid.drop(columns=["Date"])
+    return wis
 
 
 def run_job(cmd: list[str], cwd: str | None = None) -> None:

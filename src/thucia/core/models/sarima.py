@@ -158,7 +158,7 @@ def sarima(
         multivariate=False,
     )
     model.set_season_length(season_length=12)
-    model.set_retrain(retrain)
+    model.set_retrain(True)
 
     # Historical predictions
     tdf = model.historical_predictions(

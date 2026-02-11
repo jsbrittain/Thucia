@@ -32,6 +32,7 @@ class XGBoostSamples(DartsBase):
             subsample=0.9,
             colsample_bytree=0.9,
             random_state=42,
+            n_jobs=8,
         )
 
     def pre_fit(self, target_gids=None, **kwargs):
