@@ -579,7 +579,7 @@ def run_pipeline(
         if mode == "standard":
             logging.info(f"Residual regression with all PDFM features ({mode})")
             df_model_pdfm = residual_regression(
-                df_model, pdfm_df, method=method, window=sliding_window, max_workers=4
+                df_model, pdfm_df, method=method, window=sliding_window
             )
             write_db(
                 df_model_pdfm, path / f"{filename}_pdfmrr_{method}_cases_quantiles"

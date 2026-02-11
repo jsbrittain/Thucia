@@ -1,6 +1,4 @@
 import logging
-from concurrent.futures import ProcessPoolExecutor
-from concurrent.futures import wait
 from dataclasses import dataclass
 from typing import List
 from typing import Optional
@@ -8,6 +6,7 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import QuantileRegressor
 from sklearn.linear_model import Ridge
 
@@ -290,16 +289,126 @@ class QuantileAdapter(AdapterBase):
         return self._qr.predict(X).astype(np.float32)
 
 
+class HGBQuantileAdapter(AdapterBase):
+    """
+    HistGradientBoostingRegressor(loss='quantile').
+    """
+
+    def __init__(
+        self,
+        *args,
+        quantile: float = 0.5,
+        max_iter: int = 200,
+        learning_rate: float = 0.1,
+        max_leaf_nodes: Optional[int] = 31,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        assert 0.0 < quantile < 1.0
+        self.q = float(quantile)
+        self.max_iter = int(max_iter)
+        self.learning_rate = float(learning_rate)
+        self.max_leaf_nodes = max_leaf_nodes
+        self._model = None
+
+    def _fit_impl(self, X: np.ndarray, y: np.ndarray):
+        # X: (N, D), y: (N,)
+        mask = ~np.isnan(y)
+        if mask.sum() == 0:
+            raise ValueError("No non-NaN targets to fit.")
+        Xf = X[mask]
+        yf = y[mask]
+
+        # sklearn expects double dtype; keep float32 for memory but HGB accepts float32
+        self._model = HistGradientBoostingRegressor(
+            loss="quantile",
+            quantile=self.q,
+            max_iter=self.max_iter,
+            learning_rate=self.learning_rate,
+            max_leaf_nodes=self.max_leaf_nodes,
+            random_state=0,
+        )
+        # Fit (will be much faster than repeated LP solves)
+        self._model.fit(Xf, yf)
+
+    def _predict_impl(self, X: np.ndarray) -> np.ndarray:
+        if self._model is None:
+            raise RuntimeError("Model not fitted yet")
+        return self._model.predict(X).astype(np.float32)
+
+
+try:
+    import lightgbm as lgb
+
+    LIGHTGBM_AVAILABLE = True
+except Exception:
+    LIGHTGBM_AVAILABLE = False
+    lgb = None
+
+
+class LightGBMQuantileAdapter(AdapterBase):
+    """
+    Fast LightGBM quantile adapter. Very fast on medium->large datasets.
+    Requires `lightgbm` package.
+    """
+
+    def __init__(
+        self,
+        *args,
+        quantile: float = 0.5,
+        n_estimators: int = 200,
+        learning_rate: float = 0.1,
+        num_leaves: int = 31,
+        n_jobs: int = 1,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        if not LIGHTGBM_AVAILABLE:
+            raise ImportError("lightgbm is required for LightGBMQuantileAdapter.")
+        assert 0.0 < quantile < 1.0
+        self.q = float(quantile)
+        self.n_estimators = int(n_estimators)
+        self.learning_rate = float(learning_rate)
+        self.num_leaves = int(num_leaves)
+        self.n_jobs = int(n_jobs)
+        self._model = None
+
+    def _fit_impl(self, X: np.ndarray, y: np.ndarray):
+        mask = ~np.isnan(y)
+        if mask.sum() == 0:
+            raise ValueError("No non-NaN targets to fit.")
+        Xf = X[mask]
+        yf = y[mask]
+
+        # lightgbm expects 2D array; it's fine with float32
+        self._model = lgb.LGBMRegressor(
+            objective="quantile",
+            alpha=self.q,  # quantile parameter
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            num_leaves=self.num_leaves,
+            n_jobs=self.n_jobs,
+            random_state=0,
+        )
+        # Fit
+        self._model.fit(Xf, yf)
+
+    def _predict_impl(self, X: np.ndarray) -> np.ndarray:
+        if self._model is None:
+            raise RuntimeError("Model not fitted yet")
+        return self._model.predict(X).astype(np.float32)
+
+
 def _residual_regression_fit_and_apply(df, horizon, q, df_predictors, method, window):
     dfh = df[(df["quantile"] == q) & (df["horizon"] == horizon)]
 
     if method == "pinball":
-        base_alpha = 1e-1  # 0=pure pinball, 1=baseline model
-        adapter = QuantileAdapter(
+        # base_alpha = 1e-1  # 0=pure pinball, 1=baseline model
+        adapter = HGBQuantileAdapter(
             predictors_df=df_predictors,
             standardize_y=False,
             quantile=q,
-            alpha=base_alpha / (q * (1 - q)),  # tails need more regularisation
+            # alpha=base_alpha / (q * (1 - q)),  # tails need more regularisation
         )
 
     # Expanding window per date (strictly causal)
@@ -349,11 +458,7 @@ def _residual_regression_fit_and_apply(df, horizon, q, df_predictors, method, wi
     return df_out
 
 
-def residual_regression(
-    df_model, df_predictors, method, window=None, horizons=None, max_workers=None
-):
-    max_workers = max_workers if max_workers else 1
-
+def residual_regression(df_model, df_predictors, method, window=None, horizons=None):
     # Prepare embeddings
     if df_predictors is None:
         logging.warning("Model predictors not provided. Skipping adapter.")
@@ -407,33 +512,21 @@ def residual_regression(
         horizons = df_work["horizon"].unique()
     quantiles = sorted(df_work["quantile"].unique())
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-        for horizon in [1]:  # horizons:
-            # logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
-            for q in quantiles:
-                # logging.info(f"Processing quantile {q} for horizon {horizon}")
-                futures.append(
-                    executor.submit(
-                        _residual_regression_fit_and_apply,
-                        df=df_work,
-                        horizon=horizon,
-                        q=q,
-                        df_predictors=df_predictors,
-                        method=method,
-                        window=window,
-                    )
+    df_out = []
+    for horizon in [1]:  # horizons:
+        # logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
+        for q in quantiles:
+            # logging.info(f"Processing quantile {q} for horizon {horizon}")
+            df_out.append(
+                _residual_regression_fit_and_apply(
+                    df=df_work,
+                    horizon=horizon,
+                    q=q,
+                    df_predictors=df_predictors,
+                    method=method,
+                    window=window,
                 )
-        logging.info(f"Queued {len(futures)} processes, waiting for completion...")
-        wait(futures)
-        df_out = []
-        for future in futures:
-            try:
-                df_out.append(future.result())
-            except Exception as e:
-                logging.warning(
-                    f"Adapter processing failed for a horizon/quantile: {e}"
-                )
+            )
 
     df_out_all = pd.concat(df_out, axis=0)
 
