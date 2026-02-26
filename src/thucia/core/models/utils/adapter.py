@@ -399,7 +399,9 @@ class LightGBMQuantileAdapter(AdapterBase):
         return self._model.predict(X).astype(np.float32)
 
 
-def _residual_regression_fit_and_apply(df, horizon, q, df_predictors, method, window):
+def _residual_regression_fit_and_apply(
+    df, horizon, q, df_predictors, method, window, geo_col="GID_2", adapter=None
+):
     dfh = df[(df["quantile"] == q) & (df["horizon"] == horizon)]
 
     if method == "pinball":
@@ -408,8 +410,11 @@ def _residual_regression_fit_and_apply(df, horizon, q, df_predictors, method, wi
             predictors_df=df_predictors,
             standardize_y=False,
             quantile=q,
+            gid_col=geo_col,
             # alpha=base_alpha / (q * (1 - q)),  # tails need more regularisation
         )
+    elif adapter is None:
+        raise ValueError(f"Adapter instance must be provided for method '{method}'.")
 
     # Expanding window per date (strictly causal)
     out_slices = []
@@ -450,7 +455,9 @@ def _residual_regression_fit_and_apply(df, horizon, q, df_predictors, method, wi
             out_slices.append(df_apply)
             continue
 
-        pred_df_corrected = adapter.apply(df_apply, out_col="prediction")
+        pred_df_corrected = adapter.apply(
+            df_apply, out_col="prediction", gid_col=geo_col
+        )
         df_apply.loc[:, "prediction"] = pred_df_corrected["prediction"]
         out_slices.append(df_apply)
 
@@ -458,38 +465,37 @@ def _residual_regression_fit_and_apply(df, horizon, q, df_predictors, method, wi
     return df_out
 
 
-def residual_regression(df_model, df_predictors, method, window=None, horizons=None):
+def residual_regression(
+    df_model, df_predictors, method, geo_col="GID_2", window=None, horizons=None
+):
     # Prepare embeddings
     if df_predictors is None:
         logging.warning("Model predictors not provided. Skipping adapter.")
         return df_model
 
-    provinces = df_model["GID_2"].unique()
-    df_predictors = df_predictors[df_predictors["GID_2"].isin(provinces)]
-    df_predictors.set_index("GID_2", inplace=True)
+    provinces = df_model[geo_col].unique()
+    df_predictors = df_predictors[df_predictors[geo_col].isin(provinces)]
+    df_predictors.set_index(geo_col, inplace=True)
     feature_cols = [c for c in df_predictors.columns if c.startswith("feature")]
     df_predictors = df_predictors[feature_cols]
-    assert set(df_predictors.index.unique()) == set(df_model["GID_2"]), (
+    assert set(df_predictors.index.unique()) == set(df_model[geo_col]), (
         "Model and embeddings must contain the same geographic codes."
     )
 
+    adapter = None
     if method == "ridge":
-        raise NotImplementedError(
-            "Ridge adapter not currently supported in parallel loop."
+        adapter = RidgeAdapter(
+            predictors_df=df_predictors,
+            standardize_y=False,
+            alpha=2.0,
+            gid_col=geo_col,
         )
-        # adapter = RidgeAdapter(
-        #     predictors_df=df_predictors,
-        #     standardize_y=False,
-        #     alpha=2.0,
-        # )
     elif method == "mlp":
-        raise NotImplementedError(
-            "MLP adapter not currently supported in parallel loop."
+        adapter = MLPAdapter(
+            predictors_df=df_predictors,
+            standardize_y=False,
+            gid_col=geo_col,
         )
-        # adapter = MLPAdapter(
-        #     predictors_df=df_predictors,
-        #     standardize_y=False,
-        # )
     elif method == "pinball":
         # Build per quantile loop
         pass
@@ -513,20 +519,67 @@ def residual_regression(df_model, df_predictors, method, window=None, horizons=N
     quantiles = sorted(df_work["quantile"].unique())
 
     df_out = []
-    for horizon in [1]:  # horizons:
+    for horizon in horizons:
         # logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
-        for q in quantiles:
-            # logging.info(f"Processing quantile {q} for horizon {horizon}")
-            df_out.append(
-                _residual_regression_fit_and_apply(
-                    df=df_work,
-                    horizon=horizon,
-                    q=q,
-                    df_predictors=df_predictors,
-                    method=method,
-                    window=window,
+
+        if method == "pinball":
+            for q in quantiles:
+                # logging.info(f"Processing quantile {q} for horizon {horizon}")
+                df_out.append(
+                    _residual_regression_fit_and_apply(
+                        df=df_work,
+                        horizon=horizon,
+                        q=q,
+                        df_predictors=df_predictors,
+                        method=method,
+                        window=window,
+                        geo_col=geo_col,
+                        adapter=adapter,
+                    )
                 )
+        else:
+            median_fit = _residual_regression_fit_and_apply(
+                df=df_work,
+                horizon=horizon,
+                q=0.5,
+                df_predictors=df_predictors,
+                method=method,
+                window=window,
+                geo_col=geo_col,
+                adapter=adapter,
             )
+            df_orig = df_work[
+                (df_work["horizon"] == horizon) & (df_work["quantile"] == 0.5)
+            ]
+            # Merge original predictions into median_fit
+            median_fit = median_fit.merge(
+                df_orig[["Date", geo_col, "prediction"]],
+                on=["Date", geo_col],
+                suffixes=("", "_orig"),
+            )
+            median_fit["offset"] = (
+                median_fit["prediction"] - median_fit["prediction_orig"]
+            )
+
+            for q in quantiles:
+                if q == 0.5:
+                    df_out.append(
+                        median_fit.drop(columns=["prediction_orig", "offset"])
+                    )
+                else:
+                    # Apply offset to other quantiles
+                    df_q = df_work[
+                        (df_work["horizon"] == horizon) & (df_work["quantile"] == q)
+                    ].copy()
+                    df_q = df_q.merge(
+                        median_fit[["Date", geo_col, "offset"]],
+                        on=["Date", geo_col],
+                        how="left",
+                    )
+                    df_q["prediction"] = df_q["prediction"] + df_q["offset"]
+                    df_q.drop(columns=["offset"], inplace=True)
+                    df_q["horizon"] = horizon
+                    df_out.append(df_q)
 
     df_out_all = pd.concat(df_out, axis=0)
 
@@ -539,7 +592,7 @@ def residual_regression(df_model, df_predictors, method, window=None, horizons=N
 
     # Sort
     df_out_all = df_out_all.sort_values(
-        by=["Date", "GID_2", "horizon", "quantile"]
+        by=["Date", geo_col, "horizon", "quantile"]
     ).reset_index(drop=True)
 
     return df_out_all

@@ -16,12 +16,12 @@ class XGBoostSamples(DartsBase):
         self.input_chunk_length = 48
         super().__init__(*args, **kwargs)
 
-    def build_model(self):
+    def build_model(self, horizon):
         return XGBModel(
-            lags=self.input_chunk_length,
-            lags_past_covariates=self.input_chunk_length,
+            lags=48,  # self.input_chunk_length,
+            lags_past_covariates=48,  # self.input_chunk_length,
             lags_future_covariates=None,
-            output_chunk_length=1,
+            output_chunk_length=horizon,
             # probabilistic:
             likelihood="quantile",  # or "poisson" for count data
             quantiles=self.quantiles,
@@ -52,7 +52,9 @@ class XGBoostSamples(DartsBase):
             verbose=True,
         )
 
-    def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+    def historical_forecasts(
+        self, ts, cov, horizon, start_date=None, retrain=True, **kwargs
+    ):
         logging.info(
             "Generating XGBoost historical forecasts "
             f"from {start_date} with retrain={retrain}..."
@@ -60,13 +62,14 @@ class XGBoostSamples(DartsBase):
         bt = self.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
-            forecast_horizon=self.horizon,
+            forecast_horizon=horizon,
             start=start_date,
             stride=1,
             retrain=retrain,
-            last_points_only=False,  # this changes the output format
+            last_points_only=True,  # False,  # this changes the output format
             verbose=False,
-            num_samples=self.num_samples,
+            num_samples=1,  # self.num_samples,
+            predict_likelihood_parameters=True,
         )
         return bt
 
@@ -79,7 +82,7 @@ def xgboost(
     train_start_date: str | pd.Timestamp = pd.Timestamp.min,
     train_end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
-    horizon: int = 1,
+    horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
@@ -94,8 +97,9 @@ def xgboost(
     model = XGBoostSamples(
         df=df,
         case_col=case_col,
+        geo_col="GID_2" if "GID_2" in df.columns else "GID_1",
         covariate_cols=covariate_cols,
-        horizon=horizon,
+        horizons=horizons,
         num_samples=num_samples,
         db_file=db_file,
         train_start_date=train_start_date,

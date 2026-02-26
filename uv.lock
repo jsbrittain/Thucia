@@ -1014,7 +1014,7 @@ name = "cuda-bindings"
 version = "12.9.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "cuda-pathfinder", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/45/e7/b47792cc2d01c7e1d37c32402182524774dadd2d26339bd224e0e913832e/cuda_bindings-12.9.4-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c912a3d9e6b6651853eed8eed96d6800d69c08e94052c292fec3f282c5a817c9", size = 12210593 },
@@ -1044,11 +1044,10 @@ wheels = [
 
 [[package]]
 name = "darts"
-version = "0.40.0"
+version = "0.41.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "holidays" },
-    { name = "huggingface-hub" },
     { name = "joblib" },
     { name = "matplotlib" },
     { name = "narwhals" },
@@ -1056,22 +1055,33 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyod" },
-    { name = "pytorch-lightning" },
     { name = "requests" },
-    { name = "safetensors" },
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "shap" },
     { name = "statsmodels" },
-    { name = "tensorboardx" },
-    { name = "torch" },
     { name = "tqdm" },
     { name = "typing-extensions" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/7b/b0092027f3766d4c140e7e5357f78cbd24e4a909713d58fbcea6ecf56cc9/darts-0.40.0.tar.gz", hash = "sha256:97ea83db18235f67b695de49b90524424a3bdc0490b3b7bd339a74331722f75e", size = 977185 }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/b5/0eed7c1c13c2d310d52f9cf3b6b21d477b3ea0f06a9a196830158e4d0163/darts-0.41.0.tar.gz", hash = "sha256:1d059a00f8d27dca753ac423b5165b32151d414f271ee67f742726381b83f92d", size = 635139 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5b/21/88a94b02daf01936ce8fbf59d0fc1b9b09318a92693c77151efcd11c1546/darts-0.40.0-py3-none-any.whl", hash = "sha256:ef9b6fa08f8a46e7c9cb55715618e2497164590316974acd57c65a14f3bcafb3", size = 1134282 },
+    { url = "https://files.pythonhosted.org/packages/8c/08/9353c92443cd1e9d7bce0d31adfa541b3ff58e988eff0d765803035698d7/darts-0.41.0-py3-none-any.whl", hash = "sha256:fade51d03515dcf031a688257adcac3e63aa54436cd92c977cd673a2a9891138", size = 744499 },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "catboost" },
+    { name = "huggingface-hub" },
+    { name = "lightgbm" },
+    { name = "prophet" },
+    { name = "pytorch-lightning" },
+    { name = "safetensors" },
+    { name = "statsforecast", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' and sys_platform == 'win32'" },
+    { name = "statsforecast", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or sys_platform != 'win32'" },
+    { name = "tensorboardx" },
+    { name = "torch" },
+    { name = "xgboost" },
 ]
 
 [[package]]
@@ -2818,7 +2828,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ba/51/e123d997aa098c61d029f76663dedbfb9bc8dcf8c60cbd6adbe42f76d049/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:949452be657fa16687d0930933f032835951ef0892b37d2d53824d1a84dc97a8", size = 706758467 },
@@ -2829,7 +2839,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/13/ee4e00f30e676b66ae65b4f08cb5bcbb8392c03f54f2d5413ea99a5d1c80/nvidia_cufft_cu12-11.3.3.83-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4d2dd21ec0b88cf61b62e6b43564355e5222e4a3fb394cac0db101f2dd0d4f74", size = 193118695 },
@@ -2856,9 +2866,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.3.90"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
-    { name = "nvidia-cusparse-cu12", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cusparse-cu12", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/85/48/9a13d2975803e8cf2777d5ed57b87a0b6ca2cc795f9a4f59796a910bfb80/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:4376c11ad263152bd50ea295c05370360776f8c3427b30991df774f9fb26c450", size = 267506905 },
@@ -2869,7 +2879,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.8.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/f5/e1854cb2f2bcd4280c44736c93550cc300ff4b8c95ebe370d0aa7d2b473d/nvidia_cusparse_cu12-12.5.8.93-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:1ec05d76bbbd8b61b06a80e1eaf8cf4959c3d4ce8e711b65ebd0443bb0ebb13b", size = 288216466 },
@@ -5467,7 +5477,7 @@ wheels = [
 name = "thucia"
 source = { editable = "." }
 dependencies = [
-    { name = "darts" },
+    { name = "darts", extra = ["all"] },
     { name = "docker" },
     { name = "duckdb" },
     { name = "flax" },
@@ -5479,6 +5489,8 @@ dependencies = [
     { name = "pyarrow" },
     { name = "rapidfuzz" },
     { name = "rasterstats" },
+    { name = "seaborn" },
+    { name = "timesfm" },
     { name = "tqdm" },
     { name = "typing-extensions" },
     { name = "xarray" },
@@ -5494,7 +5506,6 @@ all = [
     { name = "seaborn" },
     { name = "streamlit" },
     { name = "timesfm", extra = ["torch"] },
-    { name = "u8darts", extra = ["all"] },
 ]
 chronos = [
     { name = "chronos-forecasting" },
@@ -5521,7 +5532,7 @@ requires-dist = [
     { name = "chronos-forecasting", marker = "extra == 'chronos'", specifier = ">=2.1.0" },
     { name = "colorcet", marker = "extra == 'all'", specifier = ">=3.1.0" },
     { name = "colorcet", marker = "extra == 'vis'", specifier = ">=3.1.0" },
-    { name = "darts", specifier = ">=0.35.0" },
+    { name = "darts", extras = ["all"], specifier = ">=0.41.0" },
     { name = "docker", specifier = ">=7.1.0" },
     { name = "duckdb", specifier = ">=1.4.1" },
     { name = "flax", specifier = ">=0.11.0" },
@@ -5541,15 +5552,16 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.2.1" },
     { name = "rapidfuzz", specifier = ">=3.13.0" },
     { name = "rasterstats", specifier = ">=0.20.0" },
+    { name = "seaborn", specifier = ">=0.13.2" },
     { name = "seaborn", marker = "extra == 'all'", specifier = ">=0.13.2" },
     { name = "seaborn", marker = "extra == 'vis'", specifier = ">=0.13.2" },
     { name = "streamlit", marker = "extra == 'all'", specifier = ">=1.45.1" },
     { name = "streamlit", marker = "extra == 'vis'", specifier = ">=1.45.1" },
+    { name = "timesfm", specifier = ">=1.3.0" },
     { name = "timesfm", extras = ["torch"], marker = "extra == 'all'", specifier = ">=1.3.0" },
     { name = "timesfm", extras = ["torch"], marker = "extra == 'timesfm'", specifier = ">=1.3.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "typing-extensions", specifier = ">=4.14.0" },
-    { name = "u8darts", extras = ["all"], marker = "extra == 'all'", specifier = ">=0.39.0" },
     { name = "xarray", specifier = ">=2025.6.0" },
 ]
 provides-extras = ["prefect", "vis", "timesfm", "dev", "chronos", "all"]
@@ -5699,6 +5711,9 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
+    { url = "https://files.pythonhosted.org/packages/0f/8b/4b61d6e13f7108f36910df9ab4b58fd389cc2520d54d81b88660804aad99/torch-2.10.0-2-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:418997cb02d0a0f1497cf6a09f63166f9f5df9f3e16c8a716ab76a72127c714f", size = 79423467 },
+    { url = "https://files.pythonhosted.org/packages/d3/54/a2ba279afcca44bbd320d4e73675b282fcee3d81400ea1b53934efca6462/torch-2.10.0-2-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:13ec4add8c3faaed8d13e0574f5cd4a323c11655546f91fbe6afa77b57423574", size = 79498202 },
+    { url = "https://files.pythonhosted.org/packages/ec/23/2c9fe0c9c27f7f6cb865abcea8a4568f29f00acaeadfc6a37f6801f84cb4/torch-2.10.0-2-cp313-none-macosx_11_0_arm64.whl", hash = "sha256:e521c9f030a3774ed770a9c011751fb47c4d12029a3d6522116e48431f2ff89e", size = 79498254 },
     { url = "https://files.pythonhosted.org/packages/78/89/f5554b13ebd71e05c0b002f95148033e730d3f7067f67423026cc9c69410/torch-2.10.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:3282d9febd1e4e476630a099692b44fdc214ee9bf8ee5377732d9d9dfe5712e4", size = 145992610 },
     { url = "https://files.pythonhosted.org/packages/ae/30/a3a2120621bf9c17779b169fc17e3dc29b230c29d0f8222f499f5e159aa8/torch-2.10.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:a2f9edd8dbc99f62bc4dfb78af7bf89499bca3d753423ac1b4e06592e467b763", size = 915607863 },
     { url = "https://files.pythonhosted.org/packages/6f/3d/c87b33c5f260a2a8ad68da7147e105f05868c281c63d65ed85aa4da98c66/torch-2.10.0-cp311-cp311-win_amd64.whl", hash = "sha256:29b7009dba4b7a1c960260fc8ac85022c784250af43af9fb0ebafc9883782ebd", size = 113723116 },
@@ -5806,7 +5821,7 @@ wheels = [
 
 [[package]]
 name = "triad"
-version = "1.0.1"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
@@ -5815,9 +5830,9 @@ dependencies = [
     { name = "pyarrow" },
     { name = "six" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/12/efca38c8980d8e424c30ce196e99999a397d892f85aaab3b9187f8c594b7/triad-1.0.1.tar.gz", hash = "sha256:c27d31219698f31e0a1f2073a9c580f4c21c1b0f0e7c42b7a1c3eb222da7db19", size = 54126 }
+sdist = { url = "https://files.pythonhosted.org/packages/1f/9b/7b446a8e617fde292e1628752c0578a6f6eba839f44411a8e71b7ba16ee3/triad-1.0.2.tar.gz", hash = "sha256:4fe0b7ab2e95105971b7db694c344dee4d207d335bf7ddb501f2cb9c09790be2", size = 54217 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/c4/44ebb659135b459637abd6eaa965f336bd84224c30262055e2b9c0a9af25/triad-1.0.1-py3-none-any.whl", hash = "sha256:37ea33619e831c99b8479401752b2f99956a1e496f340115a39af43c909745e9", size = 59891 },
+    { url = "https://files.pythonhosted.org/packages/9a/3e/62fa4b370f7cc9b731004bcfe1ad8ef1e52478b38f5059eb69582fa8bb5a/triad-1.0.2-py3-none-any.whl", hash = "sha256:f95257e9047fbd19a924958c4b7f9b5c0cef3e28cc03adf3baec28e80dcf45d9", size = 59946 },
 ]
 
 [[package]]
@@ -5901,64 +5916,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8b/2e/c14812d3d4d9cd1773c6be938f89e5735a1f11a9f184ac3639b93cef35d5/tzlocal-5.3.1.tar.gz", hash = "sha256:cceffc7edecefea1f595541dbd6e990cb1ea3d19bf01b2809f362a03dd7921fd", size = 30761 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/14/e2a54fabd4f08cd7af1c07030603c3356b74da07f7cc056e600436edfa17/tzlocal-5.3.1-py3-none-any.whl", hash = "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d", size = 18026 },
-]
-
-[[package]]
-name = "u8darts"
-version = "0.40.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "holidays" },
-    { name = "joblib" },
-    { name = "matplotlib" },
-    { name = "narwhals" },
-    { name = "nfoursid" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pyod" },
-    { name = "requests" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "shap" },
-    { name = "statsmodels" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
-    { name = "xarray" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/27/abd15f44b38af000829a0fb88ff414241cae3cfbb8b5871b5594c13e1fa3/u8darts-0.40.0.tar.gz", hash = "sha256:a907227f00ecb33702f7694ec85975e7c7a9bae9ee6ad6105b79c921f5ef6342", size = 977805 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/b8/9dc177bedfba0349f289f6d970106307cbf9fc46d018b6c1e696cd9dabe2/u8darts-0.40.0-py3-none-any.whl", hash = "sha256:c4e6b97e2fe2f5cc2bbfc686a906544bdac05fdbb6a277cbe4a01ccc9628e4a1", size = 1134514 },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "catboost" },
-    { name = "holidays" },
-    { name = "huggingface-hub" },
-    { name = "joblib" },
-    { name = "lightgbm" },
-    { name = "matplotlib" },
-    { name = "narwhals" },
-    { name = "nfoursid" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "prophet" },
-    { name = "pyod" },
-    { name = "pytorch-lightning" },
-    { name = "requests" },
-    { name = "safetensors" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "shap" },
-    { name = "statsforecast", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' and sys_platform == 'win32'" },
-    { name = "statsforecast", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or sys_platform != 'win32'" },
-    { name = "statsmodels" },
-    { name = "tensorboardx" },
-    { name = "torch" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
-    { name = "xarray" },
-    { name = "xgboost" },
 ]
 
 [[package]]
@@ -6249,20 +6206,20 @@ wheels = [
 
 [[package]]
 name = "xgboost"
-version = "3.1.3"
+version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "nvidia-nccl-cu12", marker = "sys_platform == 'linux'" },
     { name = "scipy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/42/db/ff3eb8ff8cdf87a57cbb0f484234b4353178587236c4c84c1d307165c1f8/xgboost-3.1.3.tar.gz", hash = "sha256:0aeaa59d7ba09221a6fa75f70406751cfafdf3f149d0a91b197a1360404a28f3", size = 1237662 }
+sdist = { url = "https://files.pythonhosted.org/packages/91/bb/1eb0242409d22db725d7a88088e6cfd6556829fb0736f9ff69aa9f1e9455/xgboost-3.2.0.tar.gz", hash = "sha256:99b0e9a2a64896cdaf509c5e46372d336c692406646d20f2af505003c0c5d70d", size = 1263936 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/a9/8668a5662c497c32ab127b7ca57d91153f499b31c725969a1e4147782e64/xgboost-3.1.3-py3-none-macosx_10_15_x86_64.whl", hash = "sha256:e16a6c352ee1a4c19372a7b2bb75129e10e63adeeabd3d11f21b7787378e5a50", size = 2378032 },
-    { url = "https://files.pythonhosted.org/packages/52/39/ec5c53228b091387e934d3d419e8e3a5ce98c1650d458987d6e254a15304/xgboost-3.1.3-py3-none-macosx_12_0_arm64.whl", hash = "sha256:a7a1d59f3529de0ad9089c59b6cc595cd7b4424feabcc06463c4bde41f202f74", size = 2211477 },
-    { url = "https://files.pythonhosted.org/packages/99/f7/ceb06e6b959e5a8b303883482ecad346495641947679e3f735ae8ac1caa7/xgboost-3.1.3-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:2e31482633883b2e95fda6055db654bbfac82e10d91ad3d9929086ebd28eb1c4", size = 115346575 },
-    { url = "https://files.pythonhosted.org/packages/6c/9c/9d4ad7f586698bad52a570d2bf81138e500a5d9f32723c2b4ed1dd9252d8/xgboost-3.1.3-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:687504d1d76dc797df08b0dbe8b83d58629cdc06df52378f617164d16142bf2c", size = 115926894 },
-    { url = "https://files.pythonhosted.org/packages/3a/d8/4d4ae25452577f2dfabc66b60e712e7c01f9fe6c389fa88c546c2f427c4d/xgboost-3.1.3-py3-none-win_amd64.whl", hash = "sha256:3fe349b4c6030f0d66e166a3a6b7d470e776d530ea240d77335e36144cbe132a", size = 72011993 },
+    { url = "https://files.pythonhosted.org/packages/2d/49/6e4cdd877c24adf56cb3586bc96d93d4dcd780b5ea1efb32e1ee0de08bae/xgboost-3.2.0-py3-none-macosx_10_15_x86_64.whl", hash = "sha256:2f661966d3e322536d9c448090a870fcba1e32ee5760c10b7c46bac7a342079a", size = 2507014 },
+    { url = "https://files.pythonhosted.org/packages/93/f1/c09ef1add609453aa3ba5bafcd0d1c1a805c1263c0b60138ec968f8ec296/xgboost-3.2.0-py3-none-macosx_12_0_arm64.whl", hash = "sha256:eabbd40d474b8dbf6cb3536325f9150b9e6f0db32d18de9914fb3227d0bef5b7", size = 2328527 },
+    { url = "https://files.pythonhosted.org/packages/96/9f/d9914a7b8df842832850b1a18e5f47aaa071c217cdd1da2ae9deb291018b/xgboost-3.2.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:852eabc6d3b3702a59bf78dbfdcd1cb9c4d3a3b6e5ed1f8781d8b9512354fdd2", size = 131100954 },
+    { url = "https://files.pythonhosted.org/packages/79/98/679de17c2caa4fd3b0b4386ecf7377301702cb0afb22930a07c142fcb1d8/xgboost-3.2.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:99b4a6bbcb47212fec5cf5fbe12347215f073c08967431b0122cfbd1ee70312c", size = 131748579 },
+    { url = "https://files.pythonhosted.org/packages/1f/3d/1661dd114a914a67e3f7ab66fa1382e7599c2a8c340f314ad30a3e2b4d08/xgboost-3.2.0-py3-none-win_amd64.whl", hash = "sha256:0d169736fd836fc13646c7ab787167b3a8110351c2c6bc770c755ee1618f0442", size = 101681668 },
 ]
 
 [[package]]

@@ -122,7 +122,7 @@ class DartsBase:
             df = self.df[~self.df["future"]]
 
         if target_gids is None:
-            target_gids = df["GID_2"].unique()
+            target_gids = df[self.geo_col].unique()
 
         if start_date is None:
             start_date = df[self.date_col].min()
@@ -143,7 +143,7 @@ class DartsBase:
         covar_list = []
         for gid in target_gids:
             gdf = df[
-                (df["GID_2"] == gid)
+                (df[self.geo_col] == gid)
                 & (df["Date"] >= start_date)
                 & (df["Date"] <= end_date)
             ]
@@ -283,7 +283,7 @@ class DartsBase:
                 value_name="prediction",
             )
             out["sample"] = out["sample"].astype(int)
-            out["GID_2"] = gid
+            out[self.geo_col] = gid
 
             if not self.sampling_method or self.sampling_method == "samples":
                 if len(out) > 1:
@@ -298,10 +298,10 @@ class DartsBase:
                                     self.quantiles,
                                 )
                                 for k, g in out.groupby(
-                                    ["Date", "GID_2"], observed=False
+                                    ["Date", self.geo_col], observed=False
                                 )
                             },
-                            names=["Date", "GID_2"],
+                            names=["Date", self.geo_col],
                         )
                         .reset_index()
                         .rename(columns={"value": "prediction"})
@@ -340,15 +340,15 @@ class DartsBase:
 
         # Merge Cases back in to preds
         preds = preds.merge(
-            df[["Date", "GID_2", "Log_Cases"]],
-            on=["Date", "GID_2"],
+            df[["Date", self.geo_col, "Log_Cases"]],
+            on=["Date", self.geo_col],
             how="left",
         )
         # Restore GID categories
-        preds["GID_2"] = pd.Categorical(
-            preds["GID_2"],
-            categories=df["GID_2"].cat.categories,
-            ordered=df["GID_2"].cat.ordered,
+        preds[self.geo_col] = pd.Categorical(
+            preds[self.geo_col],
+            categories=df[self.geo_col].cat.categories,
+            ordered=df[self.geo_col].cat.ordered,
         )
         # Return Cases to original scale
         preds["Cases"] = np.expm1(preds["Log_Cases"]).clip(lower=0)
@@ -378,7 +378,7 @@ class DartsBase:
         df[float_cols] = df[float_cols].astype(np.float32)
 
         # Model pre-fit
-        all_target_gids = df["GID_2"].unique()
+        all_target_gids = df[self.geo_col].unique()
         target_gids = [gid for gid in all_target_gids if gid not in self.rejected_gids]
         self.pre_fit(target_gids=target_gids)
 
@@ -401,7 +401,7 @@ class DartsBase:
                 # bt = [gid][time]series[horizon][1][samples]
             except ValueError as e:
                 logging.warning(
-                    f"Failed to fit for GID_2 {target_gids} (multivariate) "
+                    f"Failed to fit for {self.geo_col} {target_gids} (multivariate) "
                     f"(msg: {e}), skipping..."
                 )
                 self.rejected_gids.update(target_gids)
@@ -416,17 +416,14 @@ class DartsBase:
                     out["quantile"].str.split(".").str[-1].astype(float) / 1000
                 )
                 out["horizon"] = horizon
-                out["GID_2"] = gid
+                out[self.geo_col] = gid
                 out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                # print(out)
-                # print(out[out['quantile'] == 0.5])
-                # tdf_out.append(out)
                 tdf_out.append(self._merge_cases(df, out))
             toc = pd.Timestamp.now()
             logging.info(f"Regions {target_gids} done in {toc - tic}")
         else:
             for ts, cov, gid in zip(target_list, covar_list, target_gids):
-                logging.info(f"Forecasting for GID_2 {gid}")
+                logging.info(f"Forecasting for {self.geo_col} {gid}")
                 tic = pd.Timestamp.now()
                 start_date_timestamp = start_date.to_timestamp(how="end")
                 try:
@@ -439,10 +436,10 @@ class DartsBase:
                         horizon=horizon,
                     )
                     # for univariate, bt relates to a single time-series:
-                    # bt = [time]series[horizon][1][samples]
+                    # bt = TimeSeries[time][quantiles][1]
                 except ValueError as e:
                     logging.warning(
-                        f"Failed to fit for GID_2 {gid} (msg: {e}), skipping..."
+                        f"Failed to fit for {self.geo_col} {gid} (msg: {e}), skipping..."
                     )
                     self.rejected_gids.add(gid)
                     continue
@@ -456,13 +453,10 @@ class DartsBase:
                     out["quantile"].str.split(".").str[-1].astype(float) / 1000
                 )
                 out["horizon"] = horizon
-                out["GID_2"] = gid
+                out[self.geo_col] = gid
                 if self.fit_delta:
                     out["prediction"] = out["prediction"].cumsum()
                 out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                # print(out)
-                # print(out[out['quantile'] == 0.5])
-                # tdf_out.append(out)
                 tdf_out.append(self._merge_cases(df, out))
                 toc = pd.Timestamp.now()
                 logging.info(f"Region {gid} done in {toc - tic}")

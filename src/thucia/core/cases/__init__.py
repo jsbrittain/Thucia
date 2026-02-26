@@ -232,7 +232,7 @@ def r2(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict =
             ],
             ignore_index=True,
         )
-    return r2_gid["R2"]
+    return r2_gid
 
 
 def rmse_score(y_true, y_pred):
@@ -284,19 +284,27 @@ def rmse(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict
     return rmse_gid["RMSE"]
 
 
-def wis(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict = {}):
+def wis(
+    df,
+    pred_col,
+    true_col,
+    geo_col="GID_2",
+    group_col=None,
+    transform=None,
+    df_filter: dict = {},
+):
     if group_col is not None:
         logging.warning(
             "Group_col provided for wis calculation, but WIS is computed over all groups. Ignoring group_col."
         )
 
-    df = df[["GID_2", "Date", "quantile", pred_col, true_col]]
+    df = df[[geo_col, "Date", "quantile", pred_col, true_col]]
     if transform is not None:
         df.loc[:, true_col] = transform(df[true_col])
         df.loc[:, pred_col] = transform(df[pred_col])
     wis = wis_bracher(
         df=df,
-        group_cols=("GID_2", "Date"),
+        group_cols=(geo_col, "Date"),
         quantile_col="quantile",
         pred_col=pred_col,
         obs_col=true_col,
@@ -305,7 +313,7 @@ def wis(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict 
         monotonic_fix=True,
     )
     # Average over Date
-    # wis_gid = wis.groupby("GID_2").mean().reset_index()
+    # wis_gid = wis.groupby(geo_col).mean().reset_index()
     # wis_gid = wis_gid.drop(columns=["Date"])
     return wis
 

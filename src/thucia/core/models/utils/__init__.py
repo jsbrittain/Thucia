@@ -9,7 +9,23 @@ from sklearn.decomposition import PCA
 from .adapter import residual_regression as residual_regression
 from .residual_quantiles import add_residual_quantiles as add_residual_quantiles
 
-quantiles = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
+quantiles = [
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    0.95,
+    0.975,
+    0.99,
+]
 
 
 def sample_to_quantiles_vec(samples, quantiles=quantiles):
@@ -196,7 +212,7 @@ def pca_transform(
     return df
 
 
-def sanitise_covariates(df, covariate_cols, start_date):
+def sanitise_covariates(df, covariate_cols, start_date, gid_col="GID_2"):
     if isinstance(start_date, str):
         start_date = pd.to_datetime(start_date)
     if isinstance(start_date, pd.Timestamp):
@@ -208,10 +224,10 @@ def sanitise_covariates(df, covariate_cols, start_date):
     # Covariate sanitisation
     for c in covariate_cols:
         # NaN replacement: seasonal mean, forward and back fill
-        df[c] = df.groupby(["GID_2", df["Date"].dt.month])[c].transform(
+        df[c] = df.groupby([gid_col, df["Date"].dt.month])[c].transform(
             lambda s: s.fillna(s.mean())
         )
-        df[c] = df.groupby("GID_2")[c].ffill().bfill()
+        df[c] = df.groupby(gid_col)[c].ffill().bfill()
         # Standardise using pre- start date values
         mask = df["Date"] < start_date
         if False:
@@ -226,4 +242,39 @@ def sanitise_covariates(df, covariate_cols, start_date):
         # Sanity check
         if df[c].isna().any():
             raise Exception("NaN found in covariates")
+    return df
+
+
+def aggregate_to_admin1(
+    df: pd.DataFrame,
+    weight_col: None,
+):
+    # Aggregate to admin-1 level by summing Cases and averaging covariates
+    df = df.drop(columns=["GID_2"])
+    # Weight covars
+    if weight_col:
+        df["weight"] = df.groupby(["Date", "GID_1"])[weight_col].transform(
+            lambda x: x / x.sum()
+        )
+        covars = df.columns.difference(["Date", "GID_1", "Cases", "future", "weight"])
+        for c in covars:
+            df[c] = df[c] * df["weight"]
+
+    df = (
+        df.groupby(["Date", "GID_1"], observed=True)
+        .agg(
+            Cases=("Cases", "sum"),
+            future=("future", "first"),
+            **{
+                c: (c, "sum")
+                for c in df.columns
+                if c not in ["Date", "GID_1", "Cases", "future"]
+            },
+        )
+        .reset_index()
+    )
+    if "Log_Cases" in df.columns:
+        df["Log_Cases"] = np.log1p(df["Cases"])
+    df = df.drop(columns=["weight"], errors="ignore")
+
     return df

@@ -11,25 +11,6 @@ from thucia.core.fs import DataFrame
 from .darts import DartsBase
 
 
-quantiles = [
-    0.01,
-    0.025,
-    0.05,
-    0.1,
-    0.2,
-    0.3,
-    0.4,
-    0.5,
-    0.6,
-    0.7,
-    0.8,
-    0.9,
-    0.95,
-    0.975,
-    0.99,
-]
-
-
 # -------- NHiTS --------
 class NHiTSSamples(DartsBase):
     def __init__(self, *args, **kwargs):
@@ -50,7 +31,7 @@ class NHiTSSamples(DartsBase):
             input_chunk_length=self.input_chunk_length,
             output_chunk_length=horizon,
             dropout=self.dropout,
-            likelihood=QuantileRegression(quantiles),
+            likelihood=QuantileRegression(self.quantiles),
             random_state=self.random_state,
             n_epochs=self.n_epochs,
             # batch_size=self.batch_size,

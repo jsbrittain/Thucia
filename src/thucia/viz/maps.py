@@ -41,6 +41,7 @@ def choropleth(
     ax=None,
     admin_level: str | int | None = 1,
     value_col="Cases",
+    value_transform=lambda x: x,
     cmap="viridis",
     aggregation="sum",
     edgecolor="0.6",
@@ -65,6 +66,7 @@ def choropleth(
         raise ValueError(f"DataFrame contains multiple countries: {countries}")
     country = countries.pop()
     df = df.groupby(admin_level)[value_col].agg(aggregation).reset_index()
+    df[value_col] = value_transform(df[value_col])
     geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
     gdf = gpd.read_file(geo_filename, layer=layer)
     merged = gdf.merge(df, left_on=admin_level, right_on=admin_level, how="right")

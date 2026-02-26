@@ -278,12 +278,15 @@ class DataFrame:
                 con.execute(f"CREATE TABLE {self.table} AS SELECT * FROM df LIMIT 0")
 
                 # Ensure GID_2 is stored as ENUM with its full category list
-                cats = df["GID_2"].cat.categories.tolist()
-                cats_escaped = [c.replace("'", "''") for c in cats]
-                enum_list = ",".join(f"'{c}'" for c in cats_escaped)
-                con.execute(
-                    f"ALTER TABLE {self.table} ALTER GID_2 SET DATA TYPE ENUM({enum_list})"
-                )
+                for gid_col in ["GID_1", "GID_2"]:
+                    if gid_col not in df.columns:
+                        continue
+                    cats = df[gid_col].cat.categories.tolist()
+                    cats_escaped = [c.replace("'", "''") for c in cats]
+                    enum_list = ",".join(f"'{c}'" for c in cats_escaped)
+                    con.execute(
+                        f"ALTER TABLE {self.table} ALTER {gid_col} SET DATA TYPE ENUM({enum_list})"
+                    )
 
             # Insert data
             con.register("df", df)

@@ -11,25 +11,6 @@ from thucia.core.fs import DataFrame
 from .darts import DartsBase
 
 
-quantiles = [
-    0.01,
-    0.025,
-    0.05,
-    0.1,
-    0.2,
-    0.3,
-    0.4,
-    0.5,
-    0.6,
-    0.7,
-    0.8,
-    0.9,
-    0.95,
-    0.975,
-    0.99,
-]
-
-
 class NBEATSSamples(DartsBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -41,7 +22,7 @@ class NBEATSSamples(DartsBase):
             output_chunk_length=horizon,
             generic_architecture=True,
             dropout=0.2,
-            likelihood=QuantileRegression(quantiles),
+            likelihood=QuantileRegression(self.quantiles),
             random_state=42,
             n_epochs=150,
             # batch_size=64,
@@ -99,7 +80,7 @@ def nbeats(
     train_start_date: str | pd.Timestamp = pd.Timestamp.min,
     train_end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
-    horizons: int = 1,
+    horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
@@ -123,6 +104,7 @@ def nbeats(
     model = NBEATSSamples(
         df=df,
         case_col=case_col,
+        geo_col="GID_2" if "GID_2" in df.columns else "GID_1",
         covariate_cols=covariate_cols,
         horizons=horizons,
         num_samples=num_samples,
