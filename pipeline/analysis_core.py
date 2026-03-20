@@ -1,5 +1,6 @@
 import argparse
 import logging
+from enum import Enum
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -7,11 +8,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy import stats
 from thucia.core import models
 from thucia.core.cases import aggregate_cases
 from thucia.core.cases import cases_per_month
 from thucia.core.cases import check_index_combinations
 from thucia.core.cases import prepare_embeddings
+from thucia.core.cases import quantile_sum_gid2
 from thucia.core.cases import r2
 from thucia.core.cases import r2_score
 from thucia.core.cases import read_db
@@ -34,12 +37,12 @@ from thucia.core.models.utils import sanitise_covariates
 from thucia.viz import plot_ensemble_weights_over_time
 from thucia.viz.maps import choropleth
 from thucia.viz.maps import hex_cartogram
-# from thucia.core.cases import run_job
-# from thucia.core.models.utils import aggregate_to_admin1
 # from thucia.core.cases import rmse
+# from thucia.core.cases import run_job
 # from thucia.core.models import filter_admin1
 # from thucia.core.models import interpolate_missing_dates
 # from thucia.core.models import set_historical_na_to_zero
+# from thucia.core.models.utils import aggregate_to_admin1
 
 
 enable_logging(level=logging.DEBUG)
@@ -61,6 +64,7 @@ class Steps:
     aggregate_admin1 = False
     ensemble_creation = False
     model_statistics = False
+    model_statistics_agg = False
     regression_calculation = False
     regression_plot = False
     r2_rmse_wis_plots = False
@@ -769,24 +773,24 @@ def run_pipeline(
         logging.info("Reporting statistics for all models")
 
         # Report R2 statistic
-        geo_col = "GID_1"
+        geo_col = "GID_2"
         horizons = [1, 3, 6, 12]
         save_them = True
         model_list = [
-            # "sarima_h12",
+            "sarima_h12",
             # "sarima_h12_pdfmrr_ridge",
-            # "sarima_h12_pdfmrr_pinball",
-            "sarima_h12_adm1",
-            "sarima_h12_pdfmrr_pinball_adm1",
+            "sarima_h12_pdfmrr_pinball",
+            # "sarima_h12_adm1",
+            # "sarima_h12_pdfmrr_pinball_adm1",
             # "sarima_adm1",
             # "sarima_adm1_pdfmrr_pinball",
             # "sarima_top20",
             # "sarima_top20_pdfmrr_pinball",
-            # "tcn_h12",
+            #  "tcn_h12",
             # "tcn_h12_pdfmrr_ridge",
-            # "tcn_h12_pdfmrr_pinball",
-            "tcn_h12_adm1",
-            "tcn_h12_pdfmrr_pinball_adm1",
+            #  "tcn_h12_pdfmrr_pinball",
+            # "tcn_h12_adm1",
+            # "tcn_h12_pdfmrr_pinball_adm1",
             # "tcn_adm1",
             # "tcn_adm1_pdfmrr_ridge",
             # "tcn_adm1_pdfmrr_pinball",
@@ -794,29 +798,29 @@ def run_pipeline(
             # "tcn_top20_pdfmrr_pinball",
             # # "tft_h12",
             # # "tft_h12_pdfmrr",
-            # "xgboost_h12",
+            "xgboost_h12",
             # "xgboost_h12_pdfmrr_ridge",
-            # "xgboost_h12_pdfmrr_pinball",
-            "xgboost_h12_adm1",
-            "xgboost_h12_pdfmrr_pinball_adm1",
+            "xgboost_h12_pdfmrr_pinball",
+            # "xgboost_h12_adm1",
+            # "xgboost_h12_pdfmrr_pinball_adm1",
             # "xgboost_adm1",
             # "xgboost_adm1_pdfmrr_pinball",
             # "xgboost_top20",
             # "xgboost_top20_pdfmrr_pinball",
-            # "nbeats_h12",
+            "nbeats_h12",
             # "nbeats_h12_pdfmrr_ridge",
-            # "nbeats_h12_pdfmrr_pinball",
-            "nbeats_h12_adm1",
-            "nbeats_h12_pdfmrr_pinball_adm1",
+            "nbeats_h12_pdfmrr_pinball",
+            # "nbeats_h12_adm1",
+            # "nbeats_h12_pdfmrr_pinball_adm1",
             # "nbeats_adm1",
             # "nbeats_adm1_pdfmrr_pinball",
             # "nbeats_top20",
             # "nbeats_top20_pdfmrr_pinball",
-            # "timesfm_h12",
+            #  "timesfm_h12",
             # "timesfm_h12_pdfmrr_ridge",
-            # "timesfm_h12_pdfmrr_pinball",
-            "timesfm_h12_adm1",
-            "timesfm_h12_pdfmrr_pinball_adm1",
+            #  "timesfm_h12_pdfmrr_pinball",
+            # "timesfm_h12_adm1",
+            # "timesfm_h12_pdfmrr_pinball_adm1",
             # "timesfm_adm1",
             # "timesfm_adm1_pdfmrr_pinball",
             # "timesfm_top20",
@@ -957,6 +961,101 @@ def run_pipeline(
         #     df_all.to_csv(path / "model_performance_all.csv", index=False)
         # else:
         #     breakpoint()
+
+    if steps.model_statistics_agg:  # === Reporting statistics for all models
+        logging.info("Reporting statistics for all models")
+
+        # Report R2 statistic
+        geo_col = "GID_2"
+        horizons = [1, 3, 6, 12]
+        model_list = [
+            # "sarima_h12",
+            # "sarima_h12_pdfmrr_pinball",
+            "tcn_h12",
+            # "tcn_h12_pdfmrr_pinball",
+            # "nbeats_h12",
+            # "nbeats_h12_pdfmrr_pinball",
+            # "timesfm_h12",
+            # "timesfm_h12_pdfmrr_pinball",
+            # "xgboost_h12",
+            # "xgboost_h12_pdfmrr_pinball",
+        ]
+
+        threshold = 0
+        for model in model_list:
+            logging.info(f"Calculating statistics for model: {model}")
+            df_model = read_db(str(path / f"{model}_cases_quantiles")).df
+            wis_models = []
+
+            # for h in horizons:
+            #     logging.info(f"Calculating statistics for model: {model}, horizon: {h}")
+            #     # Filter once
+            #     df_model = df_model0[df_model0["horizon"] == h]  # .copy()  # index into tdf
+
+            #     if threshold > 0:
+            #         gid2_outliers = (
+            #             df_model[
+            #                 df_model["prediction"] > threshold
+            #             ]["GID_2"].unique()
+            #         )
+            #         if len(gid2_outliers) > 0:
+            #             logging.warning(
+            #                 f"Model {model} - Horizon {h} - Predictions > {threshold} for GIDs: {gid2_outliers}"
+            #             )
+            #             for gid in gid2_outliers:
+            #                 df_model["prediction"] = df_model.apply(
+            #                     lambda row: np.nan
+            #                     if row["GID_2"] == gid
+            #                     else row["prediction"],
+            #                     axis=1,
+            #                 )
+
+            # Determine GID_1 from GID_2
+            if "GID_1" not in df_model.columns:
+                df_model["GID_1"] = df_model["GID_2"].str.rsplit(".", n=1).str[0] + "_1"
+
+            # Collate results
+            db_file = path / f"{model}_agg_cases_quantiles.duckdb"
+            df_gid1 = quantile_sum_gid2(
+                df_model,
+                db_file=str(db_file),
+                new_file=True,
+            ).df
+            geo_col = "GID_1"  # update
+
+            # Apply log transform
+            df_gid1["prediction"] = np.log1p(df_gid1["prediction"])
+            df_gid1["Cases"] = np.log1p(df_gid1["Cases"])
+
+            for h in horizons:
+                # Compute metrics
+                wis_model = wis(
+                    df_gid1[df_gid1["horizon"] == h],
+                    "prediction",
+                    "Cases",
+                    geo_col=geo_col,
+                    transform=None,
+                    df_filter=None,
+                )
+                wis_model["horizon"] = h
+                r2_model = r2(
+                    df_gid1[df_gid1["horizon"] == h],
+                    "prediction",
+                    "Cases",
+                    group_col=geo_col,
+                    transform=None,
+                    df_filter=None,
+                )
+                # Merge into wis_model --- constant across Date
+                wis_model = wis_model.merge(
+                    r2_model,
+                    on=[geo_col],
+                    how="left",
+                )
+                wis_models.append(wis_model)
+
+            wis_model = pd.concat(wis_models, ignore_index=True)
+            wis_model.to_csv(path / f"{model}_agg_wis.csv", index=False)
 
     if steps.plot_ensemble_weights:  # === Plot ensemble weights over time
         # Plot ensemble weights
@@ -1194,11 +1293,13 @@ def run_pipeline(
                 # "SARIMA PDFM": "sarima_h12_pdfmrr_pinball",
                 # "TCN": "tcn_h12",
                 # "TCN PDFM": "tcn_h12_pdfmrr_pinball",
+                "TCN": "tcn_h12_agg",
+                "TCN PDFM": "tcn_h12_agg_pdfmrr_pinball",
                 # # "TFT": "tft_h12",
                 # "XGBoost": "xgboost_h12",
                 # "XGBoost PDFM": "xgboost_h12_pdfmrr_pinball",
-                "N-BEATS": "nbeats_h12",
-                "N-BEATS PDFM": "nbeats_h12_pdfmrr_pinball",
+                # "N-BEATS": "nbeats_h12",
+                # "N-BEATS PDFM": "nbeats_h12_pdfmrr_pinball",
                 # "TimesFM": "timesfm_h12",
                 # "TimesFM PDFM": "timesfm_h12_pdfmrr_pinball",
                 # # "Ensemble": "ensemble_h12",
@@ -2152,11 +2253,37 @@ def run_pipeline(
             .reset_index()
         )
 
+        # Wilcoxon analysis of WIS Base vs PDFM by model and horizon
+        from scipy.stats import wilcoxon
+
+        wilcoxon_results = []
+        for model in df_gid["model"].unique():
+            for horizon in df_gid["horizon"].unique():
+                df_subset = df_gid[
+                    (df_gid["model"] == model) & (df_gid["horizon"] == horizon)
+                ]
+                if len(df_subset) < 10:
+                    continue
+                stat, p_value = wilcoxon(df_subset["WIS Diff"])
+                wilcoxon_results.append(
+                    {
+                        "model": model,
+                        "horizon": horizon,
+                        "statistic": stat,
+                        "p_value": p_value,
+                        "median_diff": df_subset["WIS Diff"].median(),
+                    }
+                )
+        print(pd.DataFrame(wilcoxon_results))
+
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
 
-        raw_xlims = (0, 15)
-        diff_xlims = (-1, 1)
+        # raw_xlims = (0, 15)
+        # diff_xlims = (-1, 1)
+
+        raw_xlims = (0, 3)
+        diff_xlims = (-0.1, 0.1)
 
         def plot_hist(df, x, xlims):
             sns.histplot(
@@ -2337,6 +2464,18 @@ def run_pipeline(
     if steps.plot_wis_subset:
         start_date = pd.Period("2020-01")
         metric = "WIS"
+        iso = "BRA"
+        designation = "ceara"
+        raw_xlims = (None, None)  # 0, 3)
+        diff_xlims = (None, None)  # -1, 1)
+
+        model_list = {
+            "SARIMA": "sarima",
+            "TCN": "tcn",
+            # "NBEATS": "nbeats",
+            "XGBoost": "xgboost",
+            # "TimesFM": "timesfm",
+        }
 
         total_case_threshold = 0  # 1e4
 
@@ -2384,14 +2523,6 @@ def run_pipeline(
             df_diff["path"] = path.name
             return df_diff
 
-        model_list = {
-            "SARIMA": "sarima",
-            "TCN": "tcn",
-            "NBEATS": "nbeats",
-            "XGBoost": "xgboost",
-            "TimesFM": "timesfm",
-        }
-
         geo_col = "GID_2"
         df_diff = []
         for model_name, filestem in model_list.items():
@@ -2399,7 +2530,7 @@ def run_pipeline(
             df_diff.append(
                 read_model(
                     f"{filestem}_h12",
-                    path.parent / "BRA_full",
+                    path.parent / f"{iso}_full",
                     model_name,
                     group1="",
                     group2="_pdfmrr_pinball",
@@ -2410,8 +2541,8 @@ def run_pipeline(
             logging.info(f"Processing model: {model_name}")
             df_diff.append(
                 read_model(
-                    f"{filestem}_top20",
-                    path.parent / "BRA_top20",
+                    f"{filestem}_h12",
+                    path.parent / f"{iso}_{designation}",
                     model_name,
                     group1="",
                     group2="_pdfmrr_pinball",
@@ -2422,7 +2553,9 @@ def run_pipeline(
 
         # Isolate common geo regions
         df_diff = df_diff[
-            df_diff["GID_2"].isin(df_diff[df_diff["path"] == "BRA_top20"]["GID_2"])
+            df_diff["GID_2"].isin(
+                df_diff[df_diff["path"] == f"BRA_{designation}"]["GID_2"]
+            )
         ]
 
         df_gid = (
@@ -2453,13 +2586,34 @@ def run_pipeline(
             columns="path",
             values="WIS Base",
         )
-        df_gid["BRA_diff"] = df_gid["BRA_top20"] - df_gid["BRA_full"]
+        df_gid[f"{iso}_diff"] = df_gid[f"{iso}_{designation}"] - df_gid[f"{iso}_full"]
+
+        # Dataframe of wilcoxon test results by model and horizon
+        wilcoxon_results = []
+        for model in df_gid.index.get_level_values("model").unique():
+            print(model)
+            for horizon in df_gid.index.get_level_values("horizon").unique():
+                group_full = df_gid.loc[
+                    (slice(None), horizon, model), f"{iso}_full"
+                ].dropna()
+                group_variant = df_gid.loc[
+                    (slice(None), horizon, model), f"{iso}_{designation}"
+                ].dropna()
+                if len(group_full) > 0 and len(group_variant) > 0:
+                    stat, p_value = stats.wilcoxon(group_full, group_variant)
+                    wilcoxon_results.append(
+                        {
+                            "model": model,
+                            "horizon": horizon,
+                            "statistic": stat,
+                            "p_value": p_value,
+                            "median_diff": np.median(group_full - group_variant),
+                        }
+                    )
+        print(pd.DataFrame(wilcoxon_results))
 
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
-
-        raw_xlims = (0, 25)
-        diff_xlims = (-7.5, 7.5)
 
         def plot_hist(df, x, xlims):
             sns.histplot(
@@ -2478,7 +2632,7 @@ def run_pipeline(
         plt.subplot(3, 3, 1)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 1],
-            x="BRA_full",
+            x=f"{iso}_full",
             xlims=raw_xlims,
         )
         plt.ylabel("Horizon 1")
@@ -2486,13 +2640,13 @@ def run_pipeline(
         plt.subplot(3, 3, 4)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 6],
-            x="BRA_full",
+            x=f"{iso}_full",
             xlims=raw_xlims,
         )
         plt.subplot(3, 3, 7)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 12],
-            x="BRA_full",
+            x=f"{iso}_full",
             xlims=raw_xlims,
         )
 
@@ -2500,7 +2654,7 @@ def run_pipeline(
         plt.subplot(3, 3, 2)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 1],
-            x="BRA_top20",
+            x=f"{iso}_{designation}",
             xlims=raw_xlims,
         )
         plt.ylabel("Horizon 6")
@@ -2508,13 +2662,13 @@ def run_pipeline(
         plt.subplot(3, 3, 5)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 6],
-            x="BRA_top20",
+            x=f"{iso}_{designation}",
             xlims=raw_xlims,
         )
         plt.subplot(3, 3, 8)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 12],
-            x="BRA_top20",
+            x=f"{iso}_{designation}",
             xlims=raw_xlims,
         )
 
@@ -2522,7 +2676,7 @@ def run_pipeline(
         plt.subplot(3, 3, 3)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 1],
-            x="BRA_diff",
+            x=f"{iso}_diff",
             xlims=diff_xlims,
         )
         plt.ylabel("Horizon 12")
@@ -2530,13 +2684,13 @@ def run_pipeline(
         plt.subplot(3, 3, 6)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 6],
-            x="BRA_diff",
+            x=f"{iso}_diff",
             xlims=diff_xlims,
         )
         plt.subplot(3, 3, 9)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 12],
-            x="BRA_diff",
+            x=f"{iso}_diff",
             xlims=diff_xlims,
         )
 
@@ -2545,6 +2699,7 @@ def run_pipeline(
     if steps.plot_wis_top20:
         start_date = pd.Period("2020-01")
         metric = "WIS"
+        iso = iso3
 
         total_case_threshold = 0  # 1e4
 
@@ -2662,6 +2817,29 @@ def run_pipeline(
             values="WIS Base",
         )
         df_gid["BRA_diff"] = df_gid["BRA_top20"] - df_gid["BRA_full"]
+
+        # Dataframe of wilcoxon test results by model and horizon
+        wilcoxon_results = []
+        for model in df_gid.index.get_level_values("model").unique():
+            for horizon in df_gid.index.get_level_values("horizon").unique():
+                group_full = df_gid.loc[
+                    (slice(None), horizon, model), f"{iso}_full"
+                ].dropna()
+                group_top20 = df_gid.loc[
+                    (slice(None), horizon, model), f"{iso}_top20"
+                ].dropna()
+                if len(group_full) > 0 and len(group_top20) > 0:
+                    stat, p_value = stats.wilcoxon(group_full, group_top20)
+                    wilcoxon_results.append(
+                        {
+                            "model": model,
+                            "horizon": horizon,
+                            "statistic": stat,
+                            "p_value": p_value,
+                            "median_diff": np.median(group_full - group_top20),
+                        }
+                    )
+        print(pd.DataFrame(wilcoxon_results))
 
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
@@ -2753,6 +2931,7 @@ def run_pipeline(
     if steps.plot_wis_multi_vs_uni:
         start_date = pd.Period("2020-01")
         metric = "WIS"
+        iso = iso3
 
         total_case_threshold = 0  # 1e4
 
@@ -2868,6 +3047,29 @@ def run_pipeline(
         )
         df_gid["BRA_diff"] = df_gid["BRA_adm1"] - df_gid["BRA_full"]
 
+        # Dataframe of wilcoxon test results by model and horizon
+        wilcoxon_results = []
+        for model in df_gid.index.get_level_values("model").unique():
+            for horizon in df_gid.index.get_level_values("horizon").unique():
+                group_full = df_gid.loc[
+                    (slice(None), horizon, model), f"{iso}_full"
+                ].dropna()
+                group_adm1 = df_gid.loc[
+                    (slice(None), horizon, model), f"{iso}_adm1"
+                ].dropna()
+                if len(group_full) > 0 and len(group_adm1) > 0:
+                    stat, p_value = stats.wilcoxon(group_full, group_adm1)
+                    wilcoxon_results.append(
+                        {
+                            "model": model,
+                            "horizon": horizon,
+                            "statistic": stat,
+                            "p_value": p_value,
+                            "median_diff": np.median(group_full - group_adm1),
+                        }
+                    )
+        print(pd.DataFrame(wilcoxon_results))
+
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
 
@@ -2958,6 +3160,7 @@ def run_pipeline(
     if steps.plot_wis_full_vs_minimal:
         start_date = pd.Period("2020-01")
         metric = "WIS"
+        iso = iso3
 
         total_case_threshold = 0  # 1e4
 
@@ -3020,7 +3223,7 @@ def run_pipeline(
             df_diff.append(
                 read_model(
                     f"{filestem}_h12",
-                    path.parent / "BRA_full",
+                    path.parent / f"{iso}_full",
                     model_name,
                     group1="",
                     group2="_pdfmrr_pinball",
@@ -3032,7 +3235,7 @@ def run_pipeline(
             df_diff.append(
                 read_model(
                     f"{filestem}_h12",
-                    path.parent / "BRA_min",
+                    path.parent / f"{iso}_min",
                     model_name,
                     group1="",
                     group2="_pdfmrr_pinball",
@@ -3044,7 +3247,7 @@ def run_pipeline(
         # # Isolate common geo regions
         # df_diff = df_diff[
         #     df_diff['GID_2'].isin(
-        #         df_diff[df_diff['path'] == 'BRA_top20']['GID_2']
+        #         df_diff[df_diff['path'] == f'{iso}_min']['GID_2']
         #     )
         # ]
 
@@ -3076,7 +3279,30 @@ def run_pipeline(
             columns="path",
             values="WIS Base",
         )
-        df_gid["BRA_diff"] = df_gid["BRA_min"] - df_gid["BRA_full"]
+        df_gid[f"{iso}_diff"] = df_gid[f"{iso}_min"] - df_gid[f"{iso}_full"]
+
+        # Dataframe of wilcoxon test results by model and horizon
+        wilcoxon_results = []
+        for model in df_gid.index.get_level_values("model").unique():
+            for horizon in df_gid.index.get_level_values("horizon").unique():
+                group_full = df_gid.loc[
+                    (slice(None), horizon, model), f"{iso}_full"
+                ].dropna()
+                group_min = df_gid.loc[
+                    (slice(None), horizon, model), f"{iso}_min"
+                ].dropna()
+                if len(group_full) > 0 and len(group_min) > 0:
+                    stat, p_value = stats.wilcoxon(group_full, group_min)
+                    wilcoxon_results.append(
+                        {
+                            "model": model,
+                            "horizon": horizon,
+                            "statistic": stat,
+                            "p_value": p_value,
+                            "median_diff": np.median(group_full - group_min),
+                        }
+                    )
+        print(pd.DataFrame(wilcoxon_results))
 
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
@@ -3101,7 +3327,7 @@ def run_pipeline(
         plt.subplot(3, 3, 1)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 1],
-            x="BRA_full",
+            x=f"{iso}_full",
             xlims=raw_xlims,
         )
         plt.ylabel("Horizon 1")
@@ -3109,13 +3335,13 @@ def run_pipeline(
         plt.subplot(3, 3, 4)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 6],
-            x="BRA_full",
+            x=f"{iso}_full",
             xlims=raw_xlims,
         )
         plt.subplot(3, 3, 7)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 12],
-            x="BRA_full",
+            x=f"{iso}_full",
             xlims=raw_xlims,
         )
 
@@ -3123,7 +3349,7 @@ def run_pipeline(
         plt.subplot(3, 3, 2)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 1],
-            x="BRA_min",
+            x=f"{iso}_min",
             xlims=raw_xlims,
         )
         plt.ylabel("Horizon 6")
@@ -3131,13 +3357,13 @@ def run_pipeline(
         plt.subplot(3, 3, 5)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 6],
-            x="BRA_min",
+            x=f"{iso}_min",
             xlims=raw_xlims,
         )
         plt.subplot(3, 3, 8)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 12],
-            x="BRA_min",
+            x=f"{iso}_min",
             xlims=raw_xlims,
         )
 
@@ -3145,7 +3371,7 @@ def run_pipeline(
         plt.subplot(3, 3, 3)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 1],
-            x="BRA_diff",
+            x=f"{iso}_diff",
             xlims=diff_xlims,
         )
         plt.ylabel("Horizon 12")
@@ -3153,13 +3379,13 @@ def run_pipeline(
         plt.subplot(3, 3, 6)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 6],
-            x="BRA_diff",
+            x=f"{iso}_diff",
             xlims=diff_xlims,
         )
         plt.subplot(3, 3, 9)
         plot_hist(
             df_gid[df_gid.index.get_level_values("horizon") == 12],
-            x="BRA_diff",
+            x=f"{iso}_diff",
             xlims=diff_xlims,
         )
 
@@ -3168,6 +3394,7 @@ def run_pipeline(
     if steps.plot_wis_scales:
         start_date = pd.Period("2020-01")
         metric = "WIS"
+        iso = "BRA"
 
         total_case_threshold = 0  # 1e4
 
@@ -3181,7 +3408,7 @@ def run_pipeline(
 
             return df
 
-        def read_model(model_name, name, group1, group2, geo_col="GID_2"):
+        def read_model(model_name, path, group1, group2, geo_col="GID_2"):
             df_model = read_wis(path / f"{model_name}{group1}_wis.csv")
             df_pdfm = read_wis(path / f"{model_name}{group2}_wis.csv")
 
@@ -3203,17 +3430,39 @@ def run_pipeline(
                     gid_parts.str[0]
                     + "."
                     + gid_parts.str[1]
-                    + gid_parts.str[2]
-                    .str.split("_")
-                    .str[
-                        1
-                    ]  # this is actually inaccurate as GID_1 versions do not always follow GID_2 versions, but it is good enough for mapping
+                    + gid_parts.str[2].str.split("_").str[1]
+                    # this is actually inaccurate as GID_1 versions do not always
+                    # follow GID_2 versions, but it is good enough for mapping
                 )
                 df_diff["Log Cases"] = np.log1p(df_diff["Cases"])
-            df_diff["model"] = name
+            df_diff["model"] = model_name
             return df_diff
 
-        suffix = "h12"
+        class PlotChoice(Enum):
+            FULL = 1
+            AGG = 2
+            TOP20 = 3
+            ADM1 = 4
+
+        plot_choice = PlotChoice.TOP20
+        match plot_choice:
+            case PlotChoice.FULL:
+                suffix = "h12"
+                path_full = path.parent / f"{iso}_full"
+                geo_col = "GID_2"
+            case PlotChoice.AGG:
+                suffix = "h12_agg"
+                path_full = path.parent / f"{iso}_full"
+                geo_col = "GID_1"
+            case PlotChoice.TOP20:
+                suffix = "top20"
+                path_full = path.parent / f"{iso}_top20"
+                geo_col = "GID_2"
+            case PlotChoice.ADM1:
+                suffix = "adm1"
+                path_full = path.parent / f"{iso}_adm1"
+                geo_col = "GID_1"
+
         model_list = {
             "SARIMA": f"sarima_{suffix}",
             "TCN": f"tcn_{suffix}",
@@ -3222,14 +3471,13 @@ def run_pipeline(
             "TimesFM": f"timesfm_{suffix}",
         }
 
-        geo_col = "GID_2"
         df_diff = []
         for model_name, filestem in model_list.items():
             logging.info(f"Processing model: {model_name}")
             df_diff.append(
                 read_model(
                     filestem,
-                    model_name,
+                    path_full,
                     group1="",
                     group2="_pdfmrr_pinball",
                     geo_col=geo_col,
@@ -3240,7 +3488,7 @@ def run_pipeline(
         df_gid = (
             df_diff[
                 [
-                    "GID_2",
+                    geo_col,
                     "WIS Base",
                     "WIS PDFM",
                     "WIS Diff",
@@ -3251,7 +3499,7 @@ def run_pipeline(
                     "model",
                 ]
             ]
-            .groupby(["model", "horizon", "GID_2"])
+            .groupby(["model", "horizon", geo_col])
             .aggregate(
                 {
                     "WIS Base": "mean",
@@ -3267,11 +3515,15 @@ def run_pipeline(
 
         # WIS
         df_long = df_gid.melt(
-            id_vars=["model", "GID_2", "horizon"],
+            id_vars=["model", geo_col, "horizon"],
             value_vars=["WIS Base", "WIS PDFM"],
             var_name="method",
             value_name="wis",
         )
+
+        df_long["wis"] = np.log1p(df_long["wis"])
+        # xlims = (-0.5, 21.5)
+        xlims = (-0.5, 3.5)
 
         plt.subplot(2, 3, 4)
         sns.violinplot(
@@ -3284,6 +3536,7 @@ def run_pipeline(
             cut=0,
             gap=0.1,
         )
+        plt.xlim(xlims)
         plt.subplot(2, 3, 5)
         sns.violinplot(
             df_long[(df_long["horizon"] == 6)],
@@ -3295,6 +3548,7 @@ def run_pipeline(
             cut=0,
             gap=0.1,
         )
+        plt.xlim(xlims)
         plt.subplot(2, 3, 6)
         sns.violinplot(
             df_long[(df_long["horizon"] == 12)],
@@ -3306,12 +3560,13 @@ def run_pipeline(
             cut=0,
             gap=0.1,
         )
+        plt.xlim(xlims)
 
         plt.show()
 
         # R2
         df_long = df_gid.melt(
-            id_vars=["model", "GID_2", "horizon"],
+            id_vars=["model", geo_col, "horizon"],
             value_vars=["R2 Base", "R2 PDFM"],
             var_name="method",
             value_name="R2",

@@ -39,7 +39,7 @@ def write_nc(
     else:
         raise TypeError("Input must be a pandas DataFrame or xarray Dataset.")
 
-    if isinstance(df["Date"], pd.PeriodIndex):
+    if "Date" in df.columns and isinstance(df["Date"], pd.PeriodIndex):
         ds.attrs["period_var"] = "Date"
         ds.attrs["period_freq"] = df.index.freqstr
         ds.attrs["period_anchor"] = "end" if df.index.is_end else "start"

@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    print("Checking available commands...")
     parser = build_parser()
     args = parser.parse_args(argv)
     cmd_cls = getattr(args, "_command_class", None)
