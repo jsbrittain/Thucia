@@ -43,7 +43,7 @@ timesfm = [
 ]
 dev = [
     "pre-commit>=4.2.0",
-    "pytest>=8.4.1",
+    "pytest>=9.0.3",
     "pytest-cov>=6.2.1",
 ]
 chronos = [
@@ -56,7 +56,7 @@ all = [
     "seaborn>=0.13.2",
     "timesfm[torch]>=1.3.0",
     "pre-commit>=4.2.0",
-    "pytest>=8.4.1",
+    "pytest>=9.0.3",
     "pytest-cov>=6.2.1",
 ]
 
