@@ -14,7 +14,7 @@ from thucia.core.cases import aggregate_cases
 from thucia.core.cases import cases_per_month
 from thucia.core.cases import check_index_combinations
 from thucia.core.cases import prepare_embeddings
-from thucia.core.cases import quantile_sum_gid2
+from thucia.core.cases import quantile_sum_gid
 from thucia.core.cases import r2
 from thucia.core.cases import r2_score
 from thucia.core.cases import read_db
@@ -64,7 +64,8 @@ class Steps:
     aggregate_admin1 = False
     ensemble_creation = False
     model_statistics = False
-    model_statistics_agg = False
+    model_statistics_agg_admin1 = False
+    model_statistics_agg_admin0 = False
     regression_calculation = False
     regression_plot = False
     r2_rmse_wis_plots = False
@@ -74,8 +75,10 @@ class Steps:
     report_outliers = False
     report_static_covars = False
 
+    plot_pdfm_matrix = False
     plot_ensemble_weights = False
     plot_model_predictions = False
+    plot_model_predictions_admin0 = False
     plot_model_predictions_admin2 = False
     plot_horizon_lines = False
     plot_ensemble_weights = False
@@ -87,7 +90,7 @@ class Steps:
     plot_wis_subset = False
     plot_wis_top20 = False
     plot_wis_full_vs_minimal = False
-    plot_wis_multi_vs_uni = False
+    plot_wis_agg_cases_vs_forecasts = False
     plot_wis_scales = False
 
     diagnostic_heatmap = False
@@ -615,7 +618,7 @@ def run_pipeline(
         filename = model_filename
         method = "pinball"  # 'ridge', 'mlp', 'pinball'
         sliding_window = 24  # None for expanding window
-        geo_col = "GID_2"
+        geo_col = "GID_1"
 
         df_model = read_db(path / f"{filename}_cases_quantiles").df
 
@@ -692,6 +695,128 @@ def run_pipeline(
             cols = ["GID_2", *[f"feature{256 + k}" for k in range(74)]]
             df_model_pdfm = residual_regression(df_model, pdfm_df[cols], method="ridge")
             write_db(df_model_pdfm, path / f"{filename}_pdfmrr3_cases_quantiles")
+
+    if steps.plot_pdfm_matrix:
+        filename = model_filename
+        method = "pinball"  # 'ridge', 'mlp', 'pinball'
+        sliding_window = 24  # None for expanding window
+        geo_col = "GID_2"
+
+        print(filename)
+        # df_model = read_db(path / f"{filename}_cases_quantiles").df
+        df_model = read_db(path / "cases_with_climate").df
+
+        pdfm_filename = path / "embeddings.nc"
+        if not pdfm_filename.exists():
+            raise FileNotFoundError(f"PDFM embeddings file not found: {pdfm_filename}")
+        pdfm_df = prepare_embeddings(pdfm_filename)
+
+        # Match provinces with embeddings
+        provinces = df_model[geo_col].unique().tolist()
+        pdfm_df = pdfm_df[pdfm_df[geo_col].isin(provinces)]
+        pdfm_df = pdfm_df[~pdfm_df[geo_col].duplicated()]
+        df_model = df_model[df_model[geo_col].isin(pdfm_df[geo_col])]
+
+        # Merge nightlight stats
+        df_nightlight = read_db("data/nightlight/nightlight").df  # 2024
+        df_nightlight["nightlight"] = df_nightlight["mean"]
+        df_nightlight = df_nightlight[["GID_2", "nightlight"]]
+        pdfm_df = pdfm_df.merge(df_nightlight, on="GID_2", how="left")
+
+        # Temperature
+        temp_df = df_model[["GID_2", "Date", "tmax"]]
+        temp_df = temp_df[
+            (temp_df["Date"] >= "2024-01") & (temp_df["Date"] <= "2024-12")
+        ]
+        temp_df = temp_df.groupby("GID_2", observed=False)["tmax"].mean().reset_index()
+        pdfm_df = pdfm_df.merge(temp_df, on="GID_2", how="left")
+
+        # Population
+        pop_df = df_model[["GID_2", "Date", "pop_count"]]
+        pop_df = pop_df[(pop_df["Date"] >= "2024-01") & (pop_df["Date"] <= "2024-12")]
+        pop_df = (
+            pop_df.groupby("GID_2", observed=False)["pop_count"].mean().reset_index()
+        )
+        pdfm_df = pdfm_df.merge(pop_df, on="GID_2", how="left")
+
+        # Plot covariate matrix of PDFM features
+        fh, axs = plt.subplots(2, 3, figsize=(18, 6))
+        axs[0][0].axis("off")
+        axs[0][2].axis("off")
+        cols = [f"feature{k}" for k in range(330)]
+
+        sns.heatmap(
+            pdfm_df[cols].corr(),
+            ax=axs[0][1],
+            xticklabels=False,
+            yticklabels=False,
+            square=True,
+            vmin=-1,
+            vmax=1,
+            center=0,
+            cmap="RdBu_r",
+            cbar_kws={"shrink": 0.8},
+        )
+
+        # Correlate features with population
+        cols = [f"feature{k}" for k in range(128)]
+        df_corr = pdfm_df[cols].corrwith(np.log1p(pdfm_df["nightlight"]))
+        # target_col = df_corr.abs().idxmax()
+        print("Log nightlight correlation with PDFM features (R^2)")
+        print(np.sort(df_corr.values**2)[::-1][:10])  # R^2
+        choropleth(
+            pdfm_df,
+            ax=axs[1][0],
+            admin_level=2,
+            value_col="nightlight",
+            value_transform=np.log1p,
+            cmap="viridis",
+            aggregation="sum",
+        )
+        axs[1][0].set_title(
+            f"Log night-light correlation with Aggregated Search Trends\nPDFM embeddings (top feature: R^2={(df_corr**2).max():.2f})"
+        )
+        axs[1][0].set_axis_off()
+
+        # Correlate features with nightlights
+        cols = [f"feature{128 + k}" for k in range(128)]
+        df_corr = pdfm_df[cols].corrwith(np.log1p(pdfm_df["pop_count"]))
+        # target_col = df_corr.abs().idxmax()
+        print("Log population correlation with PDFM features (R^2)")
+        print(np.sort(df_corr.values**2)[::-1][:10])  # R^2
+        choropleth(
+            pdfm_df,
+            ax=axs[1][1],
+            admin_level=2,
+            value_col="pop_count",
+            value_transform=np.log1p,
+            cmap="viridis",
+            aggregation="sum",
+        )
+        axs[1][1].set_title(
+            f"Log population correlation with Maps and Busyness\nPDFM embeddings (top feature: R^2={(df_corr**2).max():.2f})"
+        )
+        axs[1][1].set_axis_off()
+
+        # Correlate features with temperature
+        cols = [f"feature{256 + k}" for k in range(74)]
+        df_corr = pdfm_df[cols].corrwith(pdfm_df["tmax"])
+        # target_col = df_corr.abs().idxmax()
+        print("Temperature correlation with PDFM features (R^2)")
+        print(np.sort(df_corr.values**2)[::-1][:10])  # R^2
+        choropleth(
+            pdfm_df,
+            ax=axs[1][2],
+            admin_level=2,
+            value_col="tmax",
+            cmap="viridis",
+            aggregation="sum",
+        )
+        axs[1][2].set_title(
+            f"Temperature correlation with Weather & Air Quality\nPDFM embeddings (top feature: R^2={(df_corr**2).max():.2f})"
+        )
+        axs[1][2].set_axis_off()
+        plt.show()
 
     if steps.aggregate_admin1:  # === Aggregate predictions to Admin-1 level
         filename = model
@@ -962,7 +1087,7 @@ def run_pipeline(
         # else:
         #     breakpoint()
 
-    if steps.model_statistics_agg:  # === Reporting statistics for all models
+    if steps.model_statistics_agg_admin1:  # === Reporting statistics for all models
         logging.info("Reporting statistics for all models")
 
         # Report R2 statistic
@@ -971,7 +1096,7 @@ def run_pipeline(
         model_list = [
             # "sarima_h12",
             # "sarima_h12_pdfmrr_pinball",
-            "tcn_h12",
+            # "tcn_h12",
             # "tcn_h12_pdfmrr_pinball",
             # "nbeats_h12",
             # "nbeats_h12_pdfmrr_pinball",
@@ -980,6 +1105,8 @@ def run_pipeline(
             # "xgboost_h12",
             # "xgboost_h12_pdfmrr_pinball",
         ]
+
+        model_list = [model]
 
         threshold = 0
         for model in model_list:
@@ -1016,10 +1143,12 @@ def run_pipeline(
 
             # Collate results
             db_file = path / f"{model}_agg_cases_quantiles.duckdb"
-            df_gid1 = quantile_sum_gid2(
+            df_gid1 = quantile_sum_gid(
                 df_model,
                 db_file=str(db_file),
                 new_file=True,
+                gid_col="GID_2",
+                gid_agg_col="GID_1",
             ).df
             geo_col = "GID_1"  # update
 
@@ -1056,6 +1185,70 @@ def run_pipeline(
 
             wis_model = pd.concat(wis_models, ignore_index=True)
             wis_model.to_csv(path / f"{model}_agg_wis.csv", index=False)
+
+    if steps.model_statistics_agg_admin0:  # === Reporting statistics for all models
+        logging.info("Reporting statistics for all models")
+
+        # Report R2 statistic
+        horizons = [1, 3, 6, 12]
+        model_list = [model]
+
+        threshold = 0
+        for model in model_list:
+            logging.info(f"Calculating statistics for model: {model}")
+            df_model = read_db(str(path / f"{model}_cases_quantiles")).df
+            wis_models = []
+
+            # Determine GID_1 from GID_2
+            if "GID_1" not in df_model.columns:
+                df_model["GID_1"] = df_model["GID_2"].str.rsplit(".", n=1).str[0] + "_1"
+            if "GID_0" not in df_model.columns:
+                df_model["GID_0"] = df_model["GID_1"].str.rsplit(".", n=1).str[0] + "_1"
+
+            # Collate results
+            db_file = path / f"{model}_admin0_cases_quantiles.duckdb"
+            df_gid = quantile_sum_gid(
+                df_model,
+                db_file=str(db_file),
+                new_file=True,
+                gid_col="GID_1",
+                gid_agg_col="GID_0",
+            ).df
+            geo_col = "GID_0"  # update
+
+            # Apply log transform
+            df_gid["prediction"] = np.log1p(df_gid["prediction"])
+            df_gid["Cases"] = np.log1p(df_gid["Cases"])
+
+            for h in horizons:
+                # Compute metrics
+                wis_model = wis(
+                    df_gid[df_gid["horizon"] == h],
+                    "prediction",
+                    "Cases",
+                    geo_col=geo_col,
+                    transform=None,
+                    df_filter=None,
+                )
+                wis_model["horizon"] = h
+                r2_model = r2(
+                    df_gid[df_gid["horizon"] == h],
+                    "prediction",
+                    "Cases",
+                    group_col=geo_col,
+                    transform=None,
+                    df_filter=None,
+                )
+                # Merge into wis_model --- constant across Date
+                wis_model = wis_model.merge(
+                    r2_model,
+                    on=[geo_col],
+                    how="left",
+                )
+                wis_models.append(wis_model)
+
+            wis_model = pd.concat(wis_models, ignore_index=True)
+            wis_model.to_csv(path / f"{model}_admin0_wis.csv", index=False)
 
     if steps.plot_ensemble_weights:  # === Plot ensemble weights over time
         # Plot ensemble weights
@@ -1284,9 +1477,9 @@ def run_pipeline(
                 # )["WIS"].mean()  # avg over provinces
                 # plt.title(f"{horizon}-months ahead, WIS={wis_model}")
                 plt.title(f"{horizon}-months ahead")
-            plt.ylim(0, 35e5)
+            # plt.ylim(0, 35e5)
 
-        if True:
+        if False:
             # Plot models against each other
             models_to_plot = {
                 # "SARIMA": "sarima_h12",
@@ -1306,7 +1499,7 @@ def run_pipeline(
             }
         else:
             # Plot models with/without PDFM residual regression
-            filestem = "tcn"
+            # filestem = "tcn"
             models_to_plot = {
                 # "timesfm": "timesfm_h12",
                 # "timesfm_pdfm": "timesfm_h12_pdfmrr",
@@ -1317,6 +1510,218 @@ def run_pipeline(
                 # 'nhits_pdfm_ridge': 'nhits_pdfmrr_ridge',
                 # 'nhits_pdfm_pinball': 'nhits_pdfmrr_pinball',
             }
+
+        plt.subplot(3, 1, 1)
+        plot_model_predictions(models_to_plot, horizon=1, transform=transform)
+        ax = plt.gca()
+        ax.tick_params(axis="x", which="both", labelbottom=False)
+        ax.xaxis.set_major_locator(mdates.YearLocator())
+        plt.xlim([pd.to_datetime("2020-01-01"), pd.to_datetime("2026-06-01")])
+        plt.title("1-month ahead")
+
+        plt.subplot(3, 1, 2)
+        plot_model_predictions(models_to_plot, horizon=6, transform=transform)
+        ax = plt.gca()
+        ax.tick_params(axis="x", which="both", labelbottom=False)
+        ax.xaxis.set_major_locator(mdates.YearLocator())
+        plt.title("6-months ahead")
+        plt.xlim([pd.to_datetime("2020-01-01"), pd.to_datetime("2026-06-01")])
+        plt.legend()
+        plt.ylabel("Total cases")
+
+        plt.subplot(3, 1, 3)
+        plot_model_predictions(models_to_plot, horizon=12, transform=transform)
+        ax = plt.gca()
+        ax.xaxis.set_major_locator(mdates.YearLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+        plt.xlim([pd.to_datetime("2020-01-01"), pd.to_datetime("2026-06-01")])
+        plt.title("12-months ahead")
+
+        plt.show()
+
+    if steps.plot_model_predictions_admin0:
+
+        def transform(x):
+            return x  # np.log1p
+
+        show_intervals = True
+
+        sns.set_theme(style="whitegrid")
+        plt.figure(figsize=(12, 6))
+
+        threshold = 1e6
+
+        gid_subset = []
+
+        def plot_model_predictions(models_to_plot, horizon, transform=None):
+            def _transform(x):
+                return x
+
+            transform = transform if transform is not None else _transform
+
+            # Get case count from cases_with_climate
+            filestem = models_to_plot[list(models_to_plot.keys())[0]]
+            df_model = read_db(str(path / "cases_with_climate")).df
+            if gid_subset:
+                df_model = df_model[df_model["GID_0"].isin(gid_subset)]
+            print(df_model)
+            if isinstance(df_model["Date"].dtype, pd.PeriodDtype):
+                # Plot at month end (matches end-of-month timestamp at, e.g. 2019-01-31)
+                df_model["Date"] = (
+                    df_model["Date"].dt.to_timestamp() + pd.offsets.MonthEnd()
+                )
+            df_plot = df_model
+            df_plot = (
+                df_plot.groupby("Date")
+                .agg({"Cases": "sum"})
+                .apply(transform)
+                .reset_index()
+            )
+            plt.plot(
+                df_plot["Date"],
+                df_plot["Cases"],
+                color="black",
+                linewidth=2,
+                label="Observed",
+            )
+
+            for model, filestem in models_to_plot.items():
+                print(model)
+                print(filestem)
+                try:
+                    df_model = read_db(str(path / f"{filestem}_cases_quantiles")).df
+                    if gid_subset:
+                        df_model = df_model[df_model["GID_0"].isin(gid_subset)]
+                    if threshold:
+                        df_model = df_model[df_model["prediction"] <= threshold]
+                    if isinstance(df_model["Date"].dtype, pd.PeriodDtype):
+                        # Plot at month end (matches end-of-month timestamp at, e.g. 2019-01-31)
+                        df_model["Date"] = (
+                            df_model["Date"].dt.to_timestamp() + pd.offsets.MonthEnd()
+                        )
+                except FileNotFoundError:
+                    print(f"File not found for model {filestem}, skipping...")
+                    plt.plot(0, 0, label=model)
+                    continue
+                df_plot = df_model[
+                    (df_model["quantile"] == 0.5) & (df_model["horizon"] == horizon)
+                ]
+
+                # Form 0.25 and 0.75 quantiles from 0.2, 0.3, 0.7, 0.8
+                qs = (df_model["quantile"].unique() * 100).astype(int)
+                print(f"Unique quantiles for model {model}: {qs}")
+                if 75 not in qs and 80 in qs:
+                    print("Forming 0.25 and 0.75 quantiles from 0.2, 0.3, 0.7, 0.8")
+                    df_plot_q75 = df_model[
+                        (df_model["quantile"] == 0.70)
+                        & (df_model["horizon"] == horizon)
+                    ].copy()
+                    df_plot_q75["quantile"] = 0.75
+
+                    df_plot_q75["prediction"] = (
+                        df_plot_q75["prediction"].values
+                        + df_model[
+                            (df_model["quantile"] == 0.80)
+                            & (df_model["horizon"] == horizon)
+                        ]["prediction"].values
+                    ) / 2
+
+                    df_plot_q25 = df_model[
+                        (df_model["quantile"] == 0.20)
+                        & (df_model["horizon"] == horizon)
+                    ].copy()
+                    df_plot_q25["quantile"] = 0.25
+                    df_plot_q25["prediction"] = (
+                        df_plot_q25["prediction"].values
+                        + df_model[
+                            (df_model["quantile"] == 0.30)
+                            & (df_model["horizon"] == horizon)
+                        ]["prediction"].values
+                    ) / 2
+
+                # Form 0.25 and 0.75 quantiles from 0.1, 0.5, 0.9
+                elif 75 not in qs and 90 in qs:
+                    print("Forming 0.25 and 0.75 quantiles from 0.1, 0.5, 0.9")
+                    df_plot_q75 = df_model[
+                        (df_model["quantile"] == 0.50)
+                        & (df_model["horizon"] == horizon)
+                    ].copy()
+                    df_plot_q75["quantile"] = 0.75
+                    df_plot_q75["prediction"] = df_plot_q75["prediction"] + (
+                        0.75 - 0.5
+                    ) / (0.9 - 0.5) * (
+                        df_model[
+                            (df_model["quantile"] == 0.90)
+                            & (df_model["horizon"] == horizon)
+                        ]["prediction"].values
+                        - df_plot_q75["prediction"].values
+                    )
+
+                    df_plot_q25 = df_model[
+                        (df_model["quantile"] == 0.50)
+                        & (df_model["horizon"] == horizon)
+                    ].copy()
+                    df_plot_q25["quantile"] = 0.25
+                    df_plot_q25["prediction"] = (
+                        df_plot_q25["prediction"]
+                        + (0.25 - 0.5) / (0.1 - 0.5)
+                        + (
+                            df_model[
+                                (df_model["quantile"] == 0.10)
+                                & (df_model["horizon"] == horizon)
+                            ]["prediction"].values
+                            - df_plot_q25["prediction"].values
+                        )
+                    )
+                else:
+                    print(f"Unique quantiles: {qs}")
+                    raise ValueError(
+                        "Failed to form 0.25 and 0.75 quantiles, missing required quantiles"
+                    )
+
+                # Ensure Dates match
+                df_plot_q05 = (
+                    df_plot_q25.set_index("Date").reindex(df_plot["Date"]).reset_index()
+                )
+                df_plot_q95 = (
+                    df_plot_q75.set_index("Date").reindex(df_plot["Date"]).reset_index()
+                )
+                # Take average over all provinces
+                if show_intervals:
+                    plt.fill_between(
+                        df_plot_q05.groupby("Date")["prediction"].sum().index,
+                        transform(
+                            df_plot_q05.groupby("Date")["prediction"].sum().values
+                        ),
+                        transform(
+                            df_plot_q95.groupby("Date")["prediction"].sum().values
+                        ),
+                        alpha=0.3,
+                        label=f"IQR {model}",
+                    )
+                df_plot = (
+                    df_plot.groupby("Date")
+                    .agg({"Cases": "sum", "prediction": "sum"})
+                    .apply(transform)
+                    .reset_index()
+                )
+                plt.plot(df_plot["Date"], df_plot["prediction"], label=model)
+                plt.title(f"{horizon}-months ahead")
+            # plt.ylim(0, 35e5)
+
+        # Plot models against each other
+        models_to_plot = {
+            # "SARIMA": "sarima_h12_agg_admin0",
+            # "SARIMA PDFM": "sarima_h12_agg_admin0_pdfmrr_pinball",
+            "TCN": "tcn_h12_agg_admin0",
+            "TCN PDFM": "tcn_h12_pdfmrr_pinball_agg_admin0",  # BAD
+            # "XGBoost": "xgboost_h12_agg_admin0",
+            # "XGBoost PDFM": "xgboost_h12_agg_admin0_pdfmrr_pinball",
+            # "N-BEATS": "nbeats_h12_agg_admin0",
+            # "N-BEATS PDFM": "nbeats_h12_agg_admin0_pdfmrr_pinball",
+            "TimesFM": "timesfm_h12_agg_admin0",
+            "TimesFM PDFM": "timesfm_h12_pdfmrr_pinball_agg_admin0",
+        }
 
         plt.subplot(3, 1, 1)
         plot_model_predictions(models_to_plot, horizon=1, transform=transform)
@@ -2159,6 +2564,10 @@ def run_pipeline(
 
         total_case_threshold = 0  # 1e4
 
+        wis_cutoff = None  # 0.1
+        r2_cutoff = None
+        cases_cutoff = 100
+
         def read_wis(filename):
             df = pd.read_csv(filename)
             df["Date"] = pd.PeriodIndex(df["Date"], freq="M")
@@ -2225,10 +2634,10 @@ def run_pipeline(
             )
         df_diff = pd.concat(df_diff, ignore_index=True)
 
-        df_gid = (
+        df_temporal = (
             df_diff[
                 [
-                    "GID_2",
+                    "Date",
                     "WIS Base",
                     "WIS PDFM",
                     "WIS Diff",
@@ -2239,7 +2648,7 @@ def run_pipeline(
                     "model",
                 ]
             ]
-            .groupby(["model", "horizon", "GID_2"])
+            .groupby(["model", "horizon", "Date"])
             .aggregate(
                 {
                     "WIS Base": "mean",
@@ -2252,6 +2661,87 @@ def run_pipeline(
             )
             .reset_index()
         )
+        df_temporal["WIS Diff"] = np.log(df_temporal["WIS PDFM"]) - np.log(
+            df_temporal["WIS Base"]
+        )
+        df_temporal["Date"] = df_temporal["Date"].dt.to_timestamp()
+
+        # Plot temporal trends of WIS difference by model and horizon
+        horizon = 12
+        plt.figure(figsize=(10, 6))
+        plt.subplot(2, 1, 1)
+        sns.lineplot(  # Add WIS model lines
+            data=df_temporal[df_temporal["horizon"] == horizon],
+            x="Date",
+            y="WIS Base",
+            hue="model",
+        )
+        sns.lineplot(  # Add WIS PDFM lines
+            data=df_temporal[df_temporal["horizon"] == horizon],
+            x="Date",
+            y="WIS PDFM",
+            hue="model",
+            legend=False,
+            linestyle="--",
+        )
+        plt.title("Temporal Trends of WIS by Model and Horizon")
+        plt.xlabel("Date")
+        plt.ylabel("WIS")
+        plt.legend()
+
+        plt.subplot(2, 1, 2)
+        sns.lineplot(
+            data=df_temporal[df_temporal["horizon"] == horizon],
+            x="Date",
+            y="WIS Diff",
+            hue="model",
+        )
+        plt.axhline(0, color="black", linestyle="--")
+        plt.title("Temporal Trends of WIS Difference (PDFM - Base)")
+        plt.xlabel("Date")
+        plt.ylabel("ΔWIS")
+        plt.legend()
+        plt.show()
+
+        df_gid = (
+            df_diff[
+                [
+                    "GID_2",
+                    "WIS Base",
+                    "WIS PDFM",
+                    "WIS Diff",
+                    "R2 Base",
+                    "R2 PDFM",
+                    "R2 Diff",
+                    "horizon",
+                    "model",
+                    "Cases",
+                ]
+            ]
+            .groupby(["model", "horizon", "GID_2"])
+            .aggregate(
+                {
+                    "WIS Base": "mean",
+                    "WIS PDFM": "mean",
+                    "WIS Diff": "mean",
+                    "R2 Base": "mean",  # R2 is constant across Date
+                    "R2 PDFM": "mean",
+                    "R2 Diff": "mean",
+                    "Cases": "sum",
+                }
+            )
+            .reset_index()
+        )
+
+        # Additionally, plot average WIS by horizon
+        print(f"Total GID_2 count before filtering: {df_gid['GID_2'].nunique()}")
+        if wis_cutoff:
+            df_gid = df_gid[df_gid["WIS Base"] > wis_cutoff]
+        if r2_cutoff:
+            df_gid = df_gid[df_gid["R2 Base"] > r2_cutoff]
+        if cases_cutoff:
+            df_gid = df_gid[df_gid["Cases"] > cases_cutoff]
+        print(f"Total GID_2 count after filtering: {len(df_gid['GID_2'].unique())}")
 
         # Wilcoxon analysis of WIS Base vs PDFM by model and horizon
         from scipy.stats import wilcoxon
@@ -2275,6 +2765,23 @@ def run_pipeline(
                     }
                 )
         print(pd.DataFrame(wilcoxon_results))
+
+        # Plot median WIS difference by model and horizon
+        plt.figure(figsize=(8, 6))
+        sns.barplot(
+            data=pd.DataFrame(wilcoxon_results),
+            x="horizon",
+            y="median_diff",
+            hue="model",
+            palette="Set2",
+        )
+        plt.axhline(0, color="black", linestyle="--")
+        plt.title("Median WIS Difference (PDFM - Base)")
+        plt.xlabel("Horizon (months)")
+        plt.ylabel("Median ΔWIS")
+        plt.legend()
+
+        plt.show()
 
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
@@ -2366,9 +2873,6 @@ def run_pipeline(
 
         plt.show()
 
-        # Additionally, plot average WIS by horizon
-        plt.figure()
-
         plt.subplot(2, 3, 1)
         sns.lineplot(
             data=df_gid,
@@ -2376,13 +2880,16 @@ def run_pipeline(
             y="WIS Base",
             hue="model",
             marker="o",
+            legend=False,
         )
         plt.title("Average WIS by Horizon")
         plt.xlabel("Horizon (months)")
         plt.ylabel("Average WIS (Base)")
-        plt.legend()  # bbox_to_anchor=(1.05, 1), loc="upper left")
+        # plt.legend()  # bbox_to_anchor=(1.05, 1), loc="upper left")
         plt.grid()
-        plt.tight_layout()
+        # plt.tight_layout()
+        plt.xlim(0, 12.5)
+        # plt.ylim(0, 1)
 
         plt.subplot(2, 3, 2)
         sns.lineplot(
@@ -2391,13 +2898,16 @@ def run_pipeline(
             y="WIS PDFM",
             hue="model",
             marker="o",
+            legend=False,
         )
         plt.title("Average WIS by Horizon")
         plt.xlabel("Horizon (months)")
         plt.ylabel("Average WIS (PDFM)")
-        plt.legend()  # bbox_to_anchor=(1.05, 1), loc="upper left")
+        # plt.legend()  # bbox_to_anchor=(1.05, 1), loc="upper left")
         plt.grid()
-        plt.tight_layout()
+        # plt.tight_layout()
+        plt.xlim(0, 12.5)
+        # plt.ylim(0, 1)
 
         plt.subplot(2, 3, 3)
         sns.lineplot(
@@ -2412,7 +2922,9 @@ def run_pipeline(
         plt.ylabel("Average ΔWIS (PDFM - Base)")
         plt.legend()  # bbox_to_anchor=(1.05, 1), loc="upper left")
         plt.grid()
-        plt.tight_layout()
+        # plt.tight_layout()
+        plt.xlim(0, 12.5)
+        # plt.ylim(-0.25, 0.25)
 
         plt.subplot(2, 3, 4)
         sns.lineplot(
@@ -2421,13 +2933,16 @@ def run_pipeline(
             y="R2 Base",
             hue="model",
             marker="o",
+            legend=False,
         )
         plt.title("Average R2 by Horizon")
         plt.xlabel("Horizon (months)")
         plt.ylabel("Average R2 (Base)")
-        plt.legend()
+        # plt.legend()
         plt.grid()
-        plt.tight_layout()
+        # plt.tight_layout()
+        plt.xlim(0, 12.5)
+        # plt.ylim(-0.01, 0.351)
 
         plt.subplot(2, 3, 5)
         sns.lineplot(
@@ -2436,13 +2951,18 @@ def run_pipeline(
             y="R2 PDFM",
             hue="model",
             marker="o",
+            legend=False,
         )
         plt.title("Average R2 by Horizon")
         plt.xlabel("Horizon (months)")
         plt.ylabel("Average R2 (PDFM)")
-        plt.legend()
+        # plt.legend()
         plt.grid()
-        plt.tight_layout()
+        # plt.tight_layout()
+        plt.xlim(0, 12.5)
+        # plt.ylim(-0.01, 0.351)
+
+        df_gid["R2 Diff"] = df_gid["R2 PDFM"] - df_gid["R2 Base"]
 
         plt.subplot(2, 3, 6)
         sns.lineplot(
@@ -2451,16 +2971,130 @@ def run_pipeline(
             y="R2 Diff",
             hue="model",
             marker="o",
+            legend=False,
         )
         plt.title("Average R2 by Horizon")
         plt.xlabel("Horizon (months)")
         plt.ylabel("Average ΔR2 (PDFM - Base)")
-        plt.legend()
+        # plt.legend()
         plt.grid()
-        plt.tight_layout()
+        # plt.tight_layout()
+        # plt.xlim(0, 12.5)
+        # plt.ylim(-0.015, 0.015)
 
         plt.show()
 
+        if True:
+            plt.figure(figsize=(12, 8))
+
+            # --- WIS Base ---
+            plt.subplot(2, 3, 1)
+            sns.violinplot(
+                data=df_gid,
+                x="horizon",
+                y="WIS Base",
+                hue="model",
+                cut=0,
+                inner="quartile",
+            )
+            plt.title("WIS Distribution by Horizon (Base)")
+            plt.xlabel("Horizon (months)")
+            plt.ylabel("WIS (Base)")
+            plt.grid()
+            # plt.ylim(-0.1, 14.1)
+            plt.legend().remove()
+
+            # --- WIS PDFM ---
+            plt.subplot(2, 3, 2)
+            sns.violinplot(
+                data=df_gid,
+                x="horizon",
+                y="WIS PDFM",
+                hue="model",
+                cut=0,
+                inner="quartile",
+            )
+            plt.title("WIS Distribution by Horizon (PDFM)")
+            plt.xlabel("Horizon (months)")
+            plt.ylabel("WIS (PDFM)")
+            plt.grid()
+            # plt.ylim(-0.1, 14.1)
+            plt.legend().remove()
+
+            # --- WIS Diff ---
+            plt.subplot(2, 3, 3)
+            sns.violinplot(
+                data=df_gid,
+                x="horizon",
+                y="WIS Diff",
+                hue="model",
+                cut=0,
+                inner="quartile",
+            )
+            plt.title("ΔWIS Distribution (PDFM - Base)")
+            plt.xlabel("Horizon (months)")
+            plt.ylabel("ΔWIS")
+            plt.grid()
+            # plt.ylim(-5, 5)
+            plt.legend()
+
+            # --- R2 Base ---
+            plt.subplot(2, 3, 4)
+            sns.violinplot(
+                data=df_gid,
+                x="horizon",
+                y="R2 Base",
+                hue="model",
+                cut=0,
+                inner="quartile",
+            )
+            plt.title("R2 Distribution by Horizon (Base)")
+            plt.xlabel("Horizon (months)")
+            plt.ylabel("R2 (Base)")
+            plt.grid()
+            # plt.ylim(-0.1, 1.1)
+            plt.legend().remove()
+
+            # --- R2 PDFM ---
+            plt.subplot(2, 3, 5)
+            sns.violinplot(
+                data=df_gid,
+                x="horizon",
+                y="R2 PDFM",
+                hue="model",
+                cut=0,
+                inner="quartile",
+            )
+            plt.title("R2 Distribution by Horizon (PDFM)")
+            plt.xlabel("Horizon (months)")
+            plt.ylabel("R2 (PDFM)")
+            plt.grid()
+            # plt.ylim(-0.1, 1.1)
+            plt.tight_layout()
+            plt.legend().remove()
+
+            # --- R2 Diff ---
+            df_gid["R2 Diff"] = df_gid["R2 PDFM"] - df_gid["R2 Base"]
+
+            plt.subplot(2, 3, 6)
+            sns.violinplot(
+                data=df_gid,
+                x="horizon",
+                y="R2 Diff",
+                hue="model",
+                cut=0,
+                inner="quartile",
+            )
+            plt.title("ΔR2 Distribution (PDFM - Base)")
+            plt.xlabel("Horizon (months)")
+            plt.ylabel("ΔR2")
+            plt.grid()
+            plt.legend().remove()
+
+            # plt.ylim(-0.6, 0.6)
+            plt.show()
+
+    # Compare full to (Sao Paulo, Ceara) subsets
     if steps.plot_wis_subset:
         start_date = pd.Period("2020-01")
         metric = "WIS"
@@ -2841,6 +3475,22 @@ def run_pipeline(
                     )
         print(pd.DataFrame(wilcoxon_results))
 
+        # Plot median WIS difference by model and horizon
+        plt.figure(figsize=(8, 6))
+        sns.barplot(
+            data=pd.DataFrame(wilcoxon_results),
+            x="horizon",
+            y="median_diff",
+            hue="model",
+            palette="Set2",
+        )
+        plt.axhline(0, color="black", linestyle="--")
+        plt.title("Median WIS Difference (Univariate - Multivariate)")
+        plt.xlabel("Horizon (months)")
+        plt.ylabel("Median ΔWIS")
+        plt.legend()
+        plt.show()
+
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
 
@@ -2928,7 +3578,7 @@ def run_pipeline(
 
         plt.show()
 
-    if steps.plot_wis_multi_vs_uni:
+    if steps.plot_wis_agg_cases_vs_forecasts:
         start_date = pd.Period("2020-01")
         metric = "WIS"
         iso = iso3
@@ -3069,6 +3719,22 @@ def run_pipeline(
                         }
                     )
         print(pd.DataFrame(wilcoxon_results))
+
+        # Plot median WIS difference by model and horizon
+        plt.figure(figsize=(8, 6))
+        sns.barplot(
+            data=pd.DataFrame(wilcoxon_results),
+            x="horizon",
+            y="median_diff",
+            hue="model",
+            palette="Set2",
+        )
+        plt.axhline(0, color="black", linestyle="--")
+        plt.title("Median WIS Difference (aggregated cases - aggregated forecasts)")
+        plt.xlabel("Horizon (months)")
+        plt.ylabel("Median ΔWIS")
+        plt.legend()
+        plt.show()
 
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
@@ -3304,6 +3970,22 @@ def run_pipeline(
                     )
         print(pd.DataFrame(wilcoxon_results))
 
+        # Plot median WIS difference by model and horizon
+        plt.figure(figsize=(8, 6))
+        sns.barplot(
+            data=pd.DataFrame(wilcoxon_results),
+            x="horizon",
+            y="median_diff",
+            hue="model",
+            palette="Set2",
+        )
+        plt.axhline(0, color="black", linestyle="--")
+        plt.title("Median WIS Difference (Minimal - Full covariates)")
+        plt.xlabel("Horizon (months)")
+        plt.ylabel("Median ΔWIS")
+        plt.legend()
+        plt.show()
+
         # Histogram of WIS Base by model and horizon
         fig, axs = plt.subplots(3, 3, figsize=(12, 6))
 
@@ -3444,7 +4126,7 @@ def run_pipeline(
             TOP20 = 3
             ADM1 = 4
 
-        plot_choice = PlotChoice.TOP20
+        plot_choice = PlotChoice.AGG
         match plot_choice:
             case PlotChoice.FULL:
                 suffix = "h12"

@@ -587,7 +587,7 @@ def quantile_sum_fast(
 
 
 # --- top-level function that iterates over GID_1 groups and reuses shared draws ---
-def quantile_sum_gid2(
+def quantile_sum_gid(
     df,
     db_file: str,
     new_file: bool = True,
@@ -597,9 +597,11 @@ def quantile_sum_gid2(
     quantiles=None,
     rho=0.3,
     seed_base: int = 3,
+    gid_col: str = "GID_2",
+    gid_agg_col: str = "GID_1",
 ):
     """
-    Process all GID_1 groups in df and append aggregated quantiles to a database
+    Process all gid_agg_col groups in df and append aggregated quantiles to a database
     backing store (DataFrame(db_file=...)).
 
       - Prepares shared draws (S,E and U) once using the maximum k across groups,
@@ -608,7 +610,8 @@ def quantile_sum_gid2(
       - Keeps identical API for output and merges Cases/Log_Cases as before.
 
     Parameters:
-      - df: input long quantiles dataframe with columns Date, GID_1, GID_2, horizon, quantile, prediction, Cases
+      - df: input long quantiles dataframe with columns Date, gid_agg_col, gid_col,
+            horizon, quantile, prediction, Cases
       - db_file, new_file: storage for results (DataFrame wrapper assumed)
       - samples: number of Monte Carlo samples to use (N)
       - chunk_size: chunk size for sampling
@@ -620,21 +623,21 @@ def quantile_sum_gid2(
     if not db_file:
         raise ValueError("db_file must be provided to store quantile sum results.")
     if quantiles is None:
-        quantiles = [0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99]
+        quantiles = df["quantile"].unique()
 
     tdf = DataFrame(db_file=db_file, new_file=new_file)
 
-    # Determine max number of GID_2 across all GID_1 (k_max) to prepare shared draws
-    gid1s = df["GID_1"].unique()
+    # Determine max number of gid_col across all gid_agg_col (k_max) to prepare shared draws
+    gid1s = df[gid_agg_col].unique()
     max_k = 0
     gid2_counts = {}
     for gid1 in gid1s:
-        cnt = df[df["GID_1"] == gid1]["GID_2"].nunique()
+        cnt = df[df[gid_agg_col] == gid1][gid_col].nunique()
         gid2_counts[gid1] = int(cnt)
         if cnt > max_k:
             max_k = int(cnt)
     if max_k == 0:
-        logging.warning("No GID_2 groups found in df; nothing to process.")
+        logging.warning(f"No {gid_col} groups found in df; nothing to process.")
         return tdf
 
     # Prepare shared draws for reuse: both copula and independent available
@@ -642,24 +645,26 @@ def quantile_sum_gid2(
         k_max=max_k, N=samples, seed=seed_base, dtype=dtype, mode="both"
     )
 
-    # Process each GID_1
+    # Process each gid_agg_col
     for gid1 in gid1s:
-        logging.info(f"Processing GID_1={gid1}")
-        df_gid1 = df[df["GID_1"] == gid1]
-        gids = df_gid1["GID_2"].unique()
+        logging.info(f"Processing {gid_agg_col}={gid1}")
+        df_gid1 = df[df[gid_agg_col] == gid1]
+        gids = df_gid1[gid_col].unique()
         # use slice of shared_draws for this group
         # (quantile_sum_fast will slice shared_draws internally)
         for horizon in [1, 3, 6, 12]:
             dates = df_gid1["Date"].unique()
             for date in dates:
-                logging.info(f"Processing GID_1={gid1}, horizon={horizon}, date={date}")
+                logging.info(
+                    f"Processing {gid_agg_col}={gid1}, horizon={horizon}, date={date}"
+                )
                 try:
                     entry = quantile_sum_fast(
                         df=df_gid1,
                         date=date,
                         gids=gids,
                         horizon=horizon,
-                        gid_col="GID_2",
+                        gid_col=gid_col,
                         N=samples,
                         mode="copula",
                         rho=rho,
@@ -670,14 +675,14 @@ def quantile_sum_gid2(
                         shared_draws=shared_draws,
                     )
 
-                    # add GID_1 column (categorical with consistent categories)
-                    entry["GID_1"] = gid1
-                    entry["GID_1"] = entry["GID_1"].astype("category")
-                    entry["GID_1"] = entry["GID_1"].cat.set_categories(gid1s)
+                    # add gid_agg_col column (categorical with consistent categories)
+                    entry[gid_agg_col] = gid1
+                    entry[gid_agg_col] = entry[gid_agg_col].astype("category")
+                    entry[gid_agg_col] = entry[gid_agg_col].cat.set_categories(gid1s)
 
-                    # Add Sum of Cases over GID_2 for each Date (like original code)
+                    # Add Sum of Cases over gid_col for each Date (like original code)
                     cases = df_gid1.groupby(
-                        ["Date", "GID_2"],
+                        ["Date", gid_col],
                         observed=True,
                     ).aggregate({"Cases": "first"})
                     cases = (
@@ -697,7 +702,7 @@ def quantile_sum_gid2(
 
                 except ValueError as e:
                     logging.warning(
-                        f"Skipping quantile sum for GID_1={gid1}, date={date}, horizon={horizon}: {e}"
+                        f"Skipping quantile sum for {gid_agg_col}={gid1}, date={date}, horizon={horizon}: {e}"
                     )
 
     return tdf
