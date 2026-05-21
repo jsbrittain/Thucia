@@ -16,6 +16,8 @@ countries = {
     "Peru": "PER",
     "Brazil": "BRA",
     "Brazil-WHO": "BRA_who",
+    "Brazil-backup": "BRA/backup",
+    "Brazil-chronos": "BRA_chronos",
     "Mexico": "MEX",
 }
 metrics = {

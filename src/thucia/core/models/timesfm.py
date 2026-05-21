@@ -19,12 +19,12 @@ class TimesFMSamples(DartsBase):
         super().__init__(*args, **kwargs)
         self.sampling_method = "samples"
 
-    def build_model(self):
+    def build_model(self, horizon):
         return TimesFm(
             hparams=TimesFmHparams(
                 backend="cpu",
                 context_len=32,
-                horizon_len=self.horizon,
+                horizon_len=horizon,
                 num_layers=50,
                 per_core_batch_size=32,
                 use_positional_embedding=True,
@@ -37,7 +37,15 @@ class TimesFMSamples(DartsBase):
     def pre_fit(self, target_gids=None, **kwargs):
         pass
 
-    def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+    def historical_forecasts(
+        self,
+        ts,
+        cov,
+        horizon,
+        start_date=None,
+        retrain=True,
+        **kwargs,
+    ):
         dates = ts.time_index
         output = []
         for tix, t in enumerate(dates):  # forecast target date at horizon
@@ -46,12 +54,12 @@ class TimesFMSamples(DartsBase):
             t_display = pd.Period(t, freq=self.df["Date"].iloc[0].freq)
 
             logging.info(f"Forecasting for date: {t_display}...")
-            if tix < self.horizon:
+            if tix < horizon:
                 logging.info("Not enough data to forecast, skipping...")
                 continue
 
             # Temporal masks
-            input_mask = ts.time_index <= dates[tix - self.horizon]
+            input_mask = ts.time_index <= dates[tix - horizon]
             covariate_mask = ts.time_index <= t
 
             # Inputs
@@ -77,10 +85,14 @@ class TimesFMSamples(DartsBase):
                 xreg_mode="xreg + timesfm",
             )
 
-            times = ts.time_index[covariate_mask][-self.horizon :]
-            output.append(TimeSeries.from_times_and_values(times, forecasts[0]))
+            times = ts.time_index[covariate_mask][-horizon:]
+            output.append(
+                pd.DataFrame({"Log_Cases_q0.500": forecasts[0][-1]}, index=[times[-1]])
+            )
 
-        # output = [time]series[horizon][1][samples]
+        # output = series[time][quantiles=1][1]
+        output = pd.concat(output, axis=0)
+        output = TimeSeries.from_dataframe(output)
         return output
 
 
@@ -90,7 +102,7 @@ def timesfm(
     start_date: str | pd.Timestamp = pd.Timestamp.min,
     end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
-    horizon: int = 1,
+    horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
@@ -113,8 +125,9 @@ def timesfm(
     model = TimesFMSamples(
         df=df,
         case_col=case_col,
+        geo_col="GID_2" if "GID_2" in df.columns else "GID_1",
         covariate_cols=covariate_cols,
-        horizon=horizon,
+        horizons=horizons,
         db_file=db_file,
     )
 

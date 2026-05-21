@@ -28,7 +28,7 @@ class SarimaQuantiles(DartsBase):
     def set_method(self, method: str):
         self.method = method
 
-    def build_model(self):
+    def build_model(self, *args, **kwargs):
         # No global model
         return None
 
@@ -58,6 +58,7 @@ class SarimaQuantiles(DartsBase):
             model.fit(
                 target_list[0],
                 future_covariates=cov,
+                quantiles=self.quantiles,
             )
             p, q, P, Q, s, d, D = model.model.model_["arma"]
             s_info = f"{s}"
@@ -80,10 +81,13 @@ class SarimaQuantiles(DartsBase):
                 f"in {toc - tic}"
             )
 
-    def historical_forecasts(self, ts, cov, gid=None, start_date=None, **kwargs):
+    def historical_forecasts(
+        self, ts, cov, gid=None, start_date=None, horizon=1, retrain=True, **kwargs
+    ):
         if self.sarima_retrain:
             model = AutoARIMA(
                 season_length=self.season_length,
+                quantiles=self.quantiles,
             )
         else:
             if not gid:
@@ -98,6 +102,7 @@ class SarimaQuantiles(DartsBase):
                     self.fixed_order[gid]["Q"],
                     12,  # season length (AutoArima can yield 1)
                 ),
+                quantiles=self.quantiles,
             )
         # Remove GID covariate since SARIMA is univariate
         cov = self.remove_gid_covariate(cov)
@@ -105,13 +110,14 @@ class SarimaQuantiles(DartsBase):
         bt = model.historical_forecasts(
             series=ts,
             future_covariates=cov,
-            forecast_horizon=self.horizon,
+            forecast_horizon=horizon,
             start=start_date,
             stride=1,
-            retrain=True,
-            last_points_only=False,  # this changes the output format
+            retrain=retrain,
+            last_points_only=True,
             verbose=False,
-            num_samples=self.num_samples,
+            num_samples=1,
+            predict_likelihood_parameters=True,
         )
         return bt
 
@@ -122,7 +128,7 @@ def sarima(
     start_date: str | pd.Timestamp | pd.Period = pd.Timestamp.min,
     end_date: str | pd.Timestamp | pd.Period = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
-    horizon: int = 1,
+    horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = False,  # AutoARIMA at every step
@@ -151,14 +157,15 @@ def sarima(
     model = SarimaQuantiles(
         df=df,
         case_col=case_col,
+        geo_col="GID_2" if "GID_2" in df.columns else "GID_1",
         covariate_cols=covariate_cols,
-        horizon=horizon,
+        horizons=horizons,
         num_samples=num_samples,
         db_file=db_file,
         multivariate=False,
     )
     model.set_season_length(season_length=12)
-    model.set_retrain(retrain)
+    model.set_retrain(True)
 
     # Historical predictions
     tdf = model.historical_predictions(

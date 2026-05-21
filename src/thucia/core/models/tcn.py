@@ -30,22 +30,22 @@ class TcnSamples(DartsBase):
 
         # Initialize model
         super().__init__(*args, **kwargs)
-        self.sampling_method = "samples"
+        self.sampling_method = "quantiles"
 
-    def build_model(self):
+    def build_model(self, horizon):
         return TCNModel(
-            input_chunk_length=self.input_chunk_length,
-            output_chunk_length=self.output_chunk_length,
-            kernel_size=self.kernel_size,
-            num_filters=self.num_filters,
+            input_chunk_length=48,
+            output_chunk_length=horizon,
+            # kernel_size=self.kernel_size,
+            # num_filters=self.num_filters,
             dropout=self.dropout,
             random_state=self.random_state,
-            likelihood=QuantileRegression(),  # sampling supported
+            likelihood=QuantileRegression(self.quantiles),
             save_checkpoints=False,
-            force_reset=True,
+            # force_reset=True,
             n_epochs=self.n_epochs,
-            batch_size=self.batch_size,
-            optimizer_kwargs=self.optimizer_kwargs,
+            # batch_size=self.batch_size,
+            # optimizer_kwargs=self.optimizer_kwargs,
         )
 
     def pre_fit(self, target_gids=None, **kwargs):
@@ -67,7 +67,15 @@ class TcnSamples(DartsBase):
             verbose=True,
         )
 
-    def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+    def historical_forecasts(
+        self,
+        ts,
+        cov,
+        horizon,
+        start_date=None,
+        retrain=True,
+        **kwargs,
+    ):
         logging.info(
             "Generating TCN historical forecasts "
             f"from {start_date} with retrain={retrain}..."
@@ -75,13 +83,14 @@ class TcnSamples(DartsBase):
         bt = self.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
-            forecast_horizon=self.horizon,
+            forecast_horizon=horizon,
             start=start_date,
             stride=1,
             retrain=retrain,
-            last_points_only=False,  # this changes the output format
+            last_points_only=True,
             verbose=False,
-            num_samples=self.num_samples,
+            num_samples=1,
+            predict_likelihood_parameters=True,
         )
         return bt
 
@@ -94,7 +103,7 @@ def tcn(
     train_start_date: str | pd.Timestamp = pd.Timestamp.min,
     train_end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
-    horizon: int = 1,
+    horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Retrain after every step (accurate but slow)
@@ -113,8 +122,9 @@ def tcn(
     model = TcnSamples(
         df=df,
         case_col=case_col,
+        geo_col="GID_2" if "GID_2" in df.columns else "GID_1",
         covariate_cols=covariate_cols,
-        horizon=horizon,
+        horizons=horizons,
         num_samples=num_samples,
         db_file=db_file,
         train_start_date=train_start_date,

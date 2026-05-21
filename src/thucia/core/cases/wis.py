@@ -96,8 +96,10 @@ def wis_bracher(
     # score per group
     out_rows = []
     gcols = list(group_cols)
-    for keys, g in df.groupby(gcols, sort=False):
-        # observation (assumed unique in group)
+
+    # Index into group_cols, returning index (keys) and group (g) as DataFrame
+    for keys, g in df.groupby(gcols, sort=True):
+        # Cases (assumed unique in group)
         y = g.iloc[0][obs_col]
         # predictions and levels
         q = g[quantile_col].to_numpy()
@@ -122,7 +124,12 @@ def wis_bracher(
 
         wis = _bracher_wis_from_quantiles(y_sc, q, p_sc)
         row = dict(zip(gcols, keys if isinstance(keys, tuple) else (keys,)))
-        row.update({"WIS": wis, "obs": y_sc})
+        row.update(
+            {
+                "WIS": wis.astype(float),
+                obs_col: y_sc.astype(float),
+            }
+        )
         out_rows.append(row)
 
     return pd.DataFrame(out_rows)

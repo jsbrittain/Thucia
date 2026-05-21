@@ -2,9 +2,13 @@ import math
 from pathlib import Path
 
 import geopandas as gpd
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.ticker import FormatStrFormatter
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.optimize import linear_sum_assignment
 from shapely.geometry import Polygon
 from thucia.core.fs import cache_folder
@@ -41,8 +45,14 @@ def choropleth(
     ax=None,
     admin_level: str | int | None = 1,
     value_col="Cases",
+    value_transform=None,
     cmap="viridis",
     aggregation="sum",
+    edgecolor="0.6",
+    linewidth=0.2,
+    legend=True,
+    symmetric_cmap=False,
+    colorbar=True,
 ):
     if isinstance(admin_level, int):
         admin_level = f"GID_{admin_level}"
@@ -56,19 +66,74 @@ def choropleth(
     else:
         raise ValueError(f"Unsupported admin_level: {admin_level}")
 
+    def passthrough(x):
+        return x
+
+    value_transform = passthrough if value_transform is None else value_transform
+
     countries = set(map(lambda x: x.split(".")[0], df[admin_level].unique()))
     if len(countries) > 1:
         raise ValueError(f"DataFrame contains multiple countries: {countries}")
     country = countries.pop()
     df = df.groupby(admin_level)[value_col].agg(aggregation).reset_index()
+    df[value_col] = value_transform(df[value_col])
     geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
     gdf = gpd.read_file(geo_filename, layer=layer)
     merged = gdf.merge(df, left_on=admin_level, right_on=admin_level, how="right")
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-    merged.plot(
-        column=value_col, ax=ax, legend=True, cmap=cmap, edgecolor="0.6", linewidth=0.2
-    )
+    if symmetric_cmap:
+        lim = max(abs(merged[value_col].min()), merged[value_col].max())
+        merged.plot(
+            column=value_col,
+            ax=ax,
+            legend=False,
+            cmap=cmap,
+            edgecolor=edgecolor,
+            linewidth=linewidth,
+            aspect="auto",
+            vmin=-lim,
+            vmax=lim,
+        )
+    else:
+        merged.plot(
+            column=value_col,
+            ax=ax,
+            legend=False,
+            cmap=cmap,
+            edgecolor=edgecolor,
+            linewidth=linewidth,
+            aspect="auto",
+        )
+
+    values = merged[value_col]
+
+    if symmetric_cmap:
+        lim = max(abs(values.min()), values.max())
+        norm = mcolors.Normalize(vmin=-lim, vmax=lim)
+    else:
+        norm = mcolors.Normalize(vmin=values.min(), vmax=values.max())
+
+    sm = cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+
+    if colorbar:
+        cax = inset_axes(
+            ax,
+            width="3%",  # thickness
+            height="50%",
+            loc="lower left",
+            bbox_to_anchor=(0, 0, 1, 1),  # 30% up
+            bbox_transform=ax.transAxes,
+            borderpad=0,
+        )
+
+        cbar = plt.colorbar(
+            sm,
+            cax=cax,
+        )
+        cbar.ax.yaxis.set_major_formatter(FormatStrFormatter("%.0f"))
+
     if ax is None:
         plt.show()
 
@@ -376,3 +441,196 @@ def hex_cartogram(
     ax.set_axis_off()
     if ax is None:
         plt.show()
+
+
+def subset_regions(
+    gdf,
+    admin_level,
+    region_filter=None,
+):
+    if region_filter is None:
+        return gdf
+
+    if callable(region_filter):
+        return gdf[gdf[admin_level].apply(region_filter)]
+
+    if isinstance(region_filter, str):
+        region_filter = [region_filter]
+
+    region_filter = set(region_filter)
+
+    # direct match
+    mask = gdf[admin_level].isin(region_filter)
+
+    # hierarchical match:
+    # selecting BRA.25_1 at admin2 keeps all BRA.25.XXX_1
+    if admin_level == "GID_2":
+        prefixes = {r.split("_")[0] for r in region_filter if r.count(".") == 1}
+        if prefixes:
+            mask |= gdf["GID_1"].isin(region_filter)
+    return gdf[mask]
+
+
+def adjacency_matrix(
+    df=None,
+    country=None,
+    admin_level: str | int | None = 1,
+    region_filter=None,
+    contiguity: str = "queen",  # "queen" or "rook"
+    weight: str = "binary",  # "binary" or "shared_border_km"
+    include_self: bool = False,
+    fillna: float = 0.0,
+):
+    """
+    Build an adjacency matrix for GADM admin regions.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame | None
+        Optional. If provided, the function will infer the country from GID_1
+        and restrict the matrix to regions present in df.
+    country : str | None
+        ISO3 country code, required if df is None.
+    admin_level : int | str | None
+        1 or 2 (or 'GID_1'/'GID_2').
+    reion_filter : list|str|callable | None
+        Optional filter to select a subset of regions:
+    contiguity : str
+        "queen" -> share a border or a vertex
+        "rook"   -> share a border segment only
+    weight : str
+        "binary" -> 1 if adjacent, else 0
+        "shared_border_km" -> length of shared border in kilometers
+    include_self : bool
+        If True, diagonal entries are set to 1 (binary) or 0 (weighted).
+    fillna : float
+        Value used to fill missing entries in the matrix.
+
+    Returns
+    -------
+    adj : pandas.DataFrame
+        Square adjacency matrix indexed and columned by admin codes.
+    gdf : geopandas.GeoDataFrame
+        The filtered region geometries used to build the matrix.
+    """
+
+    if isinstance(admin_level, int):
+        admin_level = f"GID_{admin_level}"
+    if admin_level is None:
+        admin_level = "GID_1"
+
+    if admin_level == "GID_1":
+        layer = "ADM_ADM_1"
+    elif admin_level == "GID_2":
+        layer = "ADM_ADM_2"
+    else:
+        raise ValueError(f"Unsupported admin_level: {admin_level}")
+
+    if contiguity not in {"queen", "rook"}:
+        raise ValueError("contiguity must be 'queen' or 'rook'")
+
+    if weight not in {"binary", "shared_border_km"}:
+        raise ValueError("weight must be 'binary' or 'shared_border_km'")
+
+    # Infer country / filter regions
+    if df is not None:
+        if "GID_1" not in df.columns:
+            raise ValueError("df must contain GID_1 to infer country.")
+        countries = set(map(lambda x: x.split(".")[0], df["GID_1"].unique()))
+        if len(countries) > 1:
+            raise ValueError(f"DataFrame contains multiple countries: {countries}")
+        inferred_country = countries.pop()
+        if country is None:
+            country = inferred_country
+
+        if admin_level not in df.columns:
+            raise ValueError(f"df must contain {admin_level} column.")
+        keep_ids = pd.Index(df[admin_level].dropna().unique())
+    else:
+        if country is None:
+            raise ValueError("country must be provided when df is None.")
+        keep_ids = None
+
+    geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
+    gdf = gpd.read_file(geo_filename, layer=layer)
+
+    gdf = subset_regions(
+        gdf,
+        admin_level,
+        region_filter,
+    )
+
+    if keep_ids is not None:
+        gdf = gdf[gdf[admin_level].isin(keep_ids)].copy()
+
+    gdf = gdf[[admin_level, "geometry"]].dropna(subset=["geometry"]).copy()
+
+    if gdf.empty:
+        raise ValueError("No geometries available after filtering.")
+
+    # Repair obvious invalid geometries if needed
+    gdf["geometry"] = gdf.geometry.apply(
+        lambda geom: geom.buffer(0) if not geom.is_valid else geom
+    )
+
+    # Use a metric CRS for shared-border lengths
+    gdf_m = gdf.to_crs(epsg=3857).reset_index(drop=True)
+
+    labels = gdf_m[admin_level].tolist()
+
+    # Initialize matrix
+    adj = pd.DataFrame(fillna, index=labels, columns=labels, dtype=float)
+
+    # Spatial index candidate search
+    sindex = gdf_m.sindex
+    tol = 1e-9  # meters, for numerical noise in rook test
+
+    for i, geom_i in enumerate(gdf_m.geometry):
+        # query possible neighbors
+        candidates = list(sindex.query(geom_i, predicate="intersects"))
+        for j in candidates:
+            if j <= i:
+                continue
+
+            geom_j = gdf_m.geometry.iloc[j]
+
+            # Exclude self
+            if geom_i.equals(geom_j):
+                continue
+
+            is_adjacent = False
+            shared_len_km = 0.0
+
+            if contiguity == "queen":
+                is_adjacent = geom_i.touches(geom_j)
+            else:
+                # rook: shared boundary segment only
+                border = geom_i.boundary.intersection(geom_j.boundary)
+                shared_len_km = border.length / 1000.0
+                is_adjacent = shared_len_km > tol
+
+            if is_adjacent:
+                if weight == "binary":
+                    val = 1.0
+                else:
+                    # Length of shared border in km (works for rook and queen;
+                    # for queen, point-only touches contribute 0)
+                    if contiguity == "queen":
+                        border = geom_i.boundary.intersection(geom_j.boundary)
+                        shared_len_km = border.length / 1000.0
+                    val = shared_len_km
+
+                adj.iat[i, j] = val
+                adj.iat[j, i] = val
+
+    if include_self:
+        if weight == "binary":
+            np.fill_diagonal(adj.values, 1.0)
+        else:
+            np.fill_diagonal(adj.values, 0.0)
+
+    # Clean up formatting
+    if weight == "binary":
+        adj = adj.astype(int)
+
+    return adj, gdf_m

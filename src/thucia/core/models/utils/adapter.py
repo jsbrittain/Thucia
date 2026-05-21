@@ -6,6 +6,8 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.linear_model import QuantileRegressor
 from sklearn.linear_model import Ridge
 
 
@@ -100,7 +102,8 @@ class AdapterBase:
 
         # one row per timepoint: replicate per gid embedding to match residual rows
         gid_to_idx = {g: i for i, g in enumerate(gid_order)}
-        idxs = dfm[self.gid_col].map(gid_to_idx).to_numpy()
+        idxs = dfm[self.gid_col].map(gid_to_idx)
+        idxs = np.asarray(idxs.astype(int))
         X_fit = X[idxs]  # (T_total, D)
         y = dfm["residual"].to_numpy(np.float32)  # (T_total,)
 
@@ -193,7 +196,7 @@ class RidgeAdapter(AdapterBase):
         return self._ridge.predict(X).astype(np.float32)
 
 
-# ---------- Tiny MLP adapter (optional) ----------
+# ---------- Tiny MLP adapter ----------
 
 try:
     import torch
@@ -261,32 +264,241 @@ class MLPAdapter(AdapterBase):
         return out
 
 
-def residual_regression(df_model, df_predictors, method):
+# Quantile adapter
+
+
+class QuantileAdapter(AdapterBase):
+    def __init__(self, *args, quantile: float = 0.5, alpha: float = 0.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert 0.0 < quantile < 1.0
+        self.q = float(quantile)
+        self.alpha = float(alpha)
+        self._qr = None
+
+    def _fit_impl(self, X: np.ndarray, y: np.ndarray):
+        # Drop NaNs if not already filtered
+        mask = ~np.isnan(y)
+        Xf = X[mask]
+        yf = y[mask]
+
+        # Fit a linear model minimizing pinball loss
+        self._qr = QuantileRegressor(quantile=self.q, alpha=self.alpha, solver="highs")
+        self._qr.fit(Xf, yf)
+
+    def _predict_impl(self, X: np.ndarray) -> np.ndarray:
+        return self._qr.predict(X).astype(np.float32)
+
+
+class HGBQuantileAdapter(AdapterBase):
+    """
+    HistGradientBoostingRegressor(loss='quantile').
+    """
+
+    def __init__(
+        self,
+        *args,
+        quantile: float = 0.5,
+        max_iter: int = 200,
+        learning_rate: float = 0.1,
+        max_leaf_nodes: Optional[int] = 31,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        assert 0.0 < quantile < 1.0
+        self.q = float(quantile)
+        self.max_iter = int(max_iter)
+        self.learning_rate = float(learning_rate)
+        self.max_leaf_nodes = max_leaf_nodes
+        self._model = None
+
+    def _fit_impl(self, X: np.ndarray, y: np.ndarray):
+        # X: (N, D), y: (N,)
+        mask = ~np.isnan(y)
+        if mask.sum() == 0:
+            raise ValueError("No non-NaN targets to fit.")
+        Xf = X[mask]
+        yf = y[mask]
+
+        # sklearn expects double dtype; keep float32 for memory but HGB accepts float32
+        self._model = HistGradientBoostingRegressor(
+            loss="quantile",
+            quantile=self.q,
+            max_iter=self.max_iter,
+            learning_rate=self.learning_rate,
+            max_leaf_nodes=self.max_leaf_nodes,
+            random_state=0,
+        )
+        # Fit (will be much faster than repeated LP solves)
+        self._model.fit(Xf, yf)
+
+    def _predict_impl(self, X: np.ndarray) -> np.ndarray:
+        if self._model is None:
+            raise RuntimeError("Model not fitted yet")
+        return self._model.predict(X).astype(np.float32)
+
+
+try:
+    import lightgbm as lgb
+
+    LIGHTGBM_AVAILABLE = True
+except Exception:
+    LIGHTGBM_AVAILABLE = False
+    lgb = None
+
+
+class LightGBMQuantileAdapter(AdapterBase):
+    """
+    Fast LightGBM quantile adapter. Very fast on medium->large datasets.
+    Requires `lightgbm` package.
+    """
+
+    def __init__(
+        self,
+        *args,
+        quantile: float = 0.5,
+        n_estimators: int = 200,
+        learning_rate: float = 0.1,
+        num_leaves: int = 31,
+        n_jobs: int = 1,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        if not LIGHTGBM_AVAILABLE:
+            raise ImportError("lightgbm is required for LightGBMQuantileAdapter.")
+        assert 0.0 < quantile < 1.0
+        self.q = float(quantile)
+        self.n_estimators = int(n_estimators)
+        self.learning_rate = float(learning_rate)
+        self.num_leaves = int(num_leaves)
+        self.n_jobs = int(n_jobs)
+        self._model = None
+
+    def _fit_impl(self, X: np.ndarray, y: np.ndarray):
+        mask = ~np.isnan(y)
+        if mask.sum() == 0:
+            raise ValueError("No non-NaN targets to fit.")
+        Xf = X[mask]
+        yf = y[mask]
+
+        # lightgbm expects 2D array; it's fine with float32
+        self._model = lgb.LGBMRegressor(
+            objective="quantile",
+            alpha=self.q,  # quantile parameter
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            num_leaves=self.num_leaves,
+            n_jobs=self.n_jobs,
+            random_state=0,
+        )
+        # Fit
+        self._model.fit(Xf, yf)
+
+    def _predict_impl(self, X: np.ndarray) -> np.ndarray:
+        if self._model is None:
+            raise RuntimeError("Model not fitted yet")
+        return self._model.predict(X).astype(np.float32)
+
+
+def _residual_regression_fit_and_apply(
+    df, horizon, q, df_predictors, method, window, geo_col="GID_2", adapter=None
+):
+    dfh = df[(df["quantile"] == q) & (df["horizon"] == horizon)]
+
+    if method == "pinball":
+        # base_alpha = 1e-1  # 0=pure pinball, 1=baseline model
+        adapter = HGBQuantileAdapter(
+            predictors_df=df_predictors,
+            standardize_y=False,
+            quantile=q,
+            gid_col=geo_col,
+            # alpha=base_alpha / (q * (1 - q)),  # tails need more regularisation
+        )
+    elif adapter is None:
+        raise ValueError(f"Adapter instance must be provided for method '{method}'.")
+
+    # Expanding window per date (strictly causal)
+    out_slices = []
+
+    # Convert once to Timestamps for robust comparisons
+    dates = dfh["Date"]
+    unique_dates = np.sort(dates.unique())
+
+    # Step over target dates
+    for d in unique_dates:
+        logging.info(f"Fitting adapter for horizon {horizon}, quantile {q}, date {d}")
+
+        # Prediction origin is target_date minus horizon (prevents Cases from
+        # leaking into the data, e.g. i+4 into an i+12 prediction)
+        origin_date = d - horizon
+        if window:
+            # Sliding window
+            mask_fit = (dates <= origin_date) & (dates > origin_date - window)
+        else:
+            # Expanding window
+            mask_fit = dates <= origin_date
+
+        # Apply correction to the target date only
+        mask_apply = dates == d
+
+        df_fit = dfh.loc[mask_fit].copy()
+        df_apply = dfh.loc[mask_apply].copy()
+
+        if df_fit.empty:
+            # Nothing to fit yet; keep predictions as-is for the first date
+            out_slices.append(df_apply)
+            continue
+
+        try:
+            adapter.fit(df=df_fit, transform=None)
+        except ValueError as e:
+            logging.warning(f"Adapter failed to fit at date {d}: {e}")
+            out_slices.append(df_apply)
+            continue
+
+        pred_df_corrected = adapter.apply(
+            df_apply, out_col="prediction", gid_col=geo_col
+        )
+        df_apply.loc[:, "prediction"] = pred_df_corrected["prediction"]
+        out_slices.append(df_apply)
+
+    df_out = pd.concat(out_slices, axis=0)
+    return df_out
+
+
+def residual_regression(
+    df_model, df_predictors, method, geo_col="GID_2", window=None, horizons=None
+):
     # Prepare embeddings
     if df_predictors is None:
         logging.warning("Model predictors not provided. Skipping adapter.")
         return df_model
 
-    provinces = df_model["GID_2"].unique()
-    df_predictors = df_predictors[df_predictors["GID_2"].isin(provinces)]
-    df_predictors.set_index("GID_2", inplace=True)
+    provinces = df_model[geo_col].unique()
+    df_predictors = df_predictors[df_predictors[geo_col].isin(provinces)]
+    df_predictors.set_index(geo_col, inplace=True)
     feature_cols = [c for c in df_predictors.columns if c.startswith("feature")]
     df_predictors = df_predictors[feature_cols]
-    assert set(df_predictors.index.unique()) == set(df_model["GID_2"]), (
+    assert set(df_predictors.index.unique()) == set(df_model[geo_col]), (
         "Model and embeddings must contain the same geographic codes."
     )
 
+    adapter = None
     if method == "ridge":
         adapter = RidgeAdapter(
             predictors_df=df_predictors,
             standardize_y=False,
             alpha=2.0,
+            gid_col=geo_col,
         )
     elif method == "mlp":
         adapter = MLPAdapter(
             predictors_df=df_predictors,
             standardize_y=False,
+            gid_col=geo_col,
         )
+    elif method == "pinball":
+        # Build per quantile loop
+        pass
     else:
         raise Exception(f"Unrecognised method requested: {method}")
 
@@ -302,46 +514,74 @@ def residual_regression(df_model, df_predictors, method):
     if "quantile" not in df_work.columns:
         df_work["quantile"] = 0.5
 
-    collated = []
-    for horizon in df_work["horizon"].unique():
-        logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
-        dfh_allq = df_work[df_work["horizon"] == horizon]
-        for q in sorted(dfh_allq["quantile"].unique()):
-            dfh = dfh_allq[dfh_allq["quantile"] == q].copy()
-            # Expanding window per date (strictly causal)
-            out_slices = []
-            # Convert once to Timestamps for robust comparisons
-            dates = pd.to_datetime(dfh["Date"])
-            unique_dates = np.sort(dates.unique())
+    if not horizons:
+        horizons = df_work["horizon"].unique()
+    quantiles = sorted(df_work["quantile"].unique())
 
-            for d in unique_dates:
-                mask_fit = dates < d
-                mask_apply = dates == d
+    df_out = []
+    for horizon in horizons:
+        # logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
 
-                df_fit = dfh.loc[mask_fit].copy()
-                df_apply = dfh.loc[mask_apply].copy()
+        if method == "pinball":
+            for q in quantiles:
+                # logging.info(f"Processing quantile {q} for horizon {horizon}")
+                df_out.append(
+                    _residual_regression_fit_and_apply(
+                        df=df_work,
+                        horizon=horizon,
+                        q=q,
+                        df_predictors=df_predictors,
+                        method=method,
+                        window=window,
+                        geo_col=geo_col,
+                        adapter=adapter,
+                    )
+                )
+        else:
+            median_fit = _residual_regression_fit_and_apply(
+                df=df_work,
+                horizon=horizon,
+                q=0.5,
+                df_predictors=df_predictors,
+                method=method,
+                window=window,
+                geo_col=geo_col,
+                adapter=adapter,
+            )
+            df_orig = df_work[
+                (df_work["horizon"] == horizon) & (df_work["quantile"] == 0.5)
+            ]
+            # Merge original predictions into median_fit
+            median_fit = median_fit.merge(
+                df_orig[["Date", geo_col, "prediction"]],
+                on=["Date", geo_col],
+                suffixes=("", "_orig"),
+            )
+            median_fit["offset"] = (
+                median_fit["prediction"] - median_fit["prediction_orig"]
+            )
 
-                if df_fit.empty:
-                    # Nothing to fit yet; keep predictions as-is for the first date
-                    out_slices.append(df_apply)
-                    continue
+            for q in quantiles:
+                if q == 0.5:
+                    df_out.append(
+                        median_fit.drop(columns=["prediction_orig", "offset"])
+                    )
+                else:
+                    # Apply offset to other quantiles
+                    df_q = df_work[
+                        (df_work["horizon"] == horizon) & (df_work["quantile"] == q)
+                    ].copy()
+                    df_q = df_q.merge(
+                        median_fit[["Date", geo_col, "offset"]],
+                        on=["Date", geo_col],
+                        how="left",
+                    )
+                    df_q["prediction"] = df_q["prediction"] + df_q["offset"]
+                    df_q.drop(columns=["offset"], inplace=True)
+                    df_q["horizon"] = horizon
+                    df_out.append(df_q)
 
-                try:
-                    adapter.fit(df=df_fit, transform=None)
-                except ValueError as e:
-                    logging.warning(f"Adapter failed to fit at date {d}: {e}")
-                    out_slices.append(df_apply)
-                    continue
-
-                pred_df_corrected = adapter.apply(df_apply, out_col="prediction")
-                df_apply.loc[:, "prediction"] = pred_df_corrected["prediction"]
-                out_slices.append(df_apply)
-
-            if out_slices:
-                df_out = pd.concat(out_slices, axis=0)
-                collated.append(df_out)
-
-    df_out_all = pd.concat(collated, axis=0)
+    df_out_all = pd.concat(df_out, axis=0)
 
     if log_transform:
         df_out_all["Cases"] = np.expm1(df_out_all["Cases"])
@@ -352,7 +592,7 @@ def residual_regression(df_model, df_predictors, method):
 
     # Sort
     df_out_all = df_out_all.sort_values(
-        by=["Date", "GID_2", "horizon", "quantile"]
+        by=["Date", geo_col, "horizon", "quantile"]
     ).reset_index(drop=True)
 
     return df_out_all

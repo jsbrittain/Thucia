@@ -8,7 +8,24 @@ import numpy as np
 import pandas as pd
 from thucia.core.fs import DataFrame
 
-quantiles = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
+
+quantiles = [
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    0.95,
+    0.975,
+    0.99,
+]
 
 
 def add_residual_quantiles(
@@ -108,11 +125,9 @@ def add_residual_quantiles(
                             gid_col: g,
                             horizon_col: h,
                             "quantile": float(q),
-                            pred_col: np.expm1(float(v)).clip(lower=0.0),
+                            pred_col: np.expm1(float(v)).clip(min=0.0),
                             y_col: df_apply[y_col].iloc[i],
-                            "Cases": np.expm1(df_apply["Cases"].iloc[i]).clip(
-                                lower=0.0
-                            ),
+                            "Cases": np.expm1(df_apply["Cases"].iloc[i]).clip(min=0.0),
                         }
                     )
 
