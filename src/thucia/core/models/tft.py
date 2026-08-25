@@ -26,7 +26,7 @@ class TftSamples(DartsBase):
         super().__init__(*args, **kwargs)
         self.sampling_method = "samples"
 
-    def build_model(self):
+    def build_model(self, horizon=None):
         return TFTModel(
             input_chunk_length=self.input_chunk_length,
             output_chunk_length=self.output_chunk_length,
@@ -73,7 +73,7 @@ class TftSamples(DartsBase):
             start=start_date,
             stride=1,
             retrain=retrain,
-            last_points_only=False,  # this changes the output format
+            last_points_only=True,
             verbose=False,
             num_samples=self.num_samples,
         )

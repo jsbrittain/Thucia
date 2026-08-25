@@ -454,17 +454,40 @@ class DartsBase:
                 out = bt.to_dataframe().reset_index(names="Date")
                 out = out.melt(
                     id_vars="Date",
-                    var_name="quantile",
+                    var_name="var",
                     value_name="prediction",
-                )
-                out["quantile"] = (
-                    out["quantile"].str.split(".").str[-1].astype(float) / 1000
                 )
                 out["horizon"] = horizon
                 out[self.geo_col] = gid
-                if self.fit_delta:
-                    out["prediction"] = out["prediction"].cumsum()
-                out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
+                if out["var"].str.contains("_s").any():
+                    # Sample-based output (e.g. darts ARIMA with num_samples):
+                    # collapse samples to the canonical quantile grid.
+                    qparts = []
+                    for date, g in out.groupby("Date"):
+                        s2q = sample_to_quantiles_vec(
+                            np.clip(np.expm1(g["prediction"].to_numpy()), 0, None),
+                            self.quantiles,
+                        )
+                        qparts.append(
+                            pd.DataFrame(
+                                {
+                                    "Date": date,
+                                    "horizon": horizon,
+                                    self.geo_col: gid,
+                                    "quantile": s2q["quantile"],
+                                    "prediction": s2q["value"],
+                                }
+                            )
+                        )
+                    out = pd.concat(qparts, ignore_index=True)
+                else:
+                    out["quantile"] = (
+                        out["var"].str.split(".").str[-1].astype(float) / 1000
+                    )
+                    out = out.drop(columns=["var"])
+                    if self.fit_delta:
+                        out["prediction"] = out["prediction"].cumsum()
+                    out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
                 tdf_out.append(self._merge_cases(df, out))
                 toc = pd.Timestamp.now()
                 logging.info(f"Region {gid} done in {toc - tic}")

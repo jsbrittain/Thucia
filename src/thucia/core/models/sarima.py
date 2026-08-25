@@ -54,11 +54,13 @@ class SarimaQuantiles(DartsBase):
                 end_date=self.train_end_date,
             )
             cov = self.remove_gid_covariate(covar_list[0])
-            model = AutoARIMA(season_length=self.season_length)
+            model = AutoARIMA(
+                season_length=self.season_length,
+                quantiles=self.quantiles,
+            )
             model.fit(
                 target_list[0],
                 future_covariates=cov,
-                quantiles=self.quantiles,
             )
             p, q, P, Q, s, d, D = model.model.model_["arma"]
             s_info = f"{s}"
@@ -102,10 +104,16 @@ class SarimaQuantiles(DartsBase):
                     self.fixed_order[gid]["Q"],
                     12,  # season length (AutoArima can yield 1)
                 ),
-                quantiles=self.quantiles,
             )
         # Remove GID covariate since SARIMA is univariate
         cov = self.remove_gid_covariate(cov)
+        # AutoARIMA supports likelihood parameters directly; the fixed-order
+        # ARIMA path does not, so sample from it instead (converted to
+        # quantiles by DartsBase).
+        if self.sarima_retrain:
+            predict_kwargs = dict(num_samples=1, predict_likelihood_parameters=True)
+        else:
+            predict_kwargs = dict(num_samples=self.num_samples)
         # Historical forecasts
         bt = model.historical_forecasts(
             series=ts,
@@ -116,8 +124,7 @@ class SarimaQuantiles(DartsBase):
             retrain=retrain,
             last_points_only=True,
             verbose=False,
-            num_samples=1,
-            predict_likelihood_parameters=True,
+            **predict_kwargs,
         )
         return bt
 

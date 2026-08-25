@@ -13,7 +13,9 @@ repos:
     hooks:
       - id: ruff
       - id: ruff-format
+        require_serial: true
   - repo: https://github.com/asottile/reorder-python-imports
     rev: v3.16.0
     hooks:
       - id: reorder-python-imports
+        require_serial: true
