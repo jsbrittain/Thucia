@@ -191,6 +191,10 @@ def r2_score(y_true, y_pred):
     ss_res = np.sum((y_true - y_pred) ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
 
+    if ss_tot == 0:
+        # Constant target: R^2 is undefined; follow sklearn's convention (0.0)
+        # so downstream aggregates don't propagate inf/nan.
+        return 0.0
     r2x = 1 - (ss_res / ss_tot)
     return r2x
 

@@ -122,6 +122,13 @@ def iterative_training(df, quantiles, testing_dates):
     return weights_df
 
 
+def _to_timestamp(s: pd.Series) -> pd.Series:
+    """Normalise dates to timestamps for comparison, tolerating Period dtypes."""
+    if isinstance(s.dtype, pd.PeriodDtype):
+        return s.dt.to_timestamp()
+    return pd.to_datetime(s)
+
+
 def apply_weights_to_forecasts(df, weights_df, quantiles, lag=1):
     models = df["model"].unique()
     dfe = df[df["model"] == models[0]].copy()  # structure template
@@ -129,9 +136,9 @@ def apply_weights_to_forecasts(df, weights_df, quantiles, lag=1):
 
     # ensure Dates are comparable & sorted
     df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"])
+    df["Date"] = _to_timestamp(df["Date"])
     weights_df = weights_df.copy()
-    weights_df["Date"] = pd.to_datetime(weights_df["Date"])
+    weights_df["Date"] = _to_timestamp(weights_df["Date"])
     dates = sorted(df["Date"].unique())
 
     for i, date in enumerate(dates):

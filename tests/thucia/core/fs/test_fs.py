@@ -139,3 +139,10 @@ def test_accessor_boolean_vector():
         .equals(tdf.df.iloc[[1]].reset_index(drop=True))
     )
     assert len(tdf[pd.Series([False, False])]) == 0
+
+
+def test_head():
+    tdf = DataFrame(df=pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]}))
+    out = tdf.head(2)
+    assert len(out) == 2
+    assert out["a"].tolist() == [1, 2]

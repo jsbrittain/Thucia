@@ -217,7 +217,7 @@ def sanitise_covariates(df, covariate_cols, start_date, gid_col="GID_2"):
         start_date = pd.to_datetime(start_date)
     if isinstance(start_date, pd.Timestamp):
         freq = re.search(r"period\[(.+)\]", df["Date"].dtype.name).group(1)
-        start_date = pd.to_period(start_date, freq)
+        start_date = start_date.to_period(freq)
     if not start_date:
         start_date = df["Date"].max()
 
