@@ -45,6 +45,14 @@ class DartsBase:
         self.quantiles = quantiles or default_quantiles
         self.fit_delta = False
 
+        # Models assume the geo column is categorical (e.g. multivariate
+        # encoding via .cat.codes, and stable category ordering across GIDs).
+        # Coerce on the local copy if the caller supplied plain strings.
+        if isinstance(self.df, pd.DataFrame) and self.geo_col in self.df.columns:
+            if not isinstance(self.df[self.geo_col].dtype, pd.CategoricalDtype):
+                self.df = self.df.copy()
+                self.df[self.geo_col] = self.df[self.geo_col].astype("category")
+
         if self.multivariate and "GID_2_codes" not in self.covariate_cols:
             self.covariate_cols.append("GID_2_codes")  # added in get_cases
 

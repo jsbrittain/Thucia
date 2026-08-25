@@ -13,6 +13,7 @@ from thucia.core.fs import read_zarr  # noqa: F401
 from thucia.core.fs import write_db  # noqa: F401
 from thucia.core.fs import write_nc  # noqa: F401
 from thucia.core.fs import write_zarr  # noqa: F401
+from thucia.core.quantiles import quantiles as default_quantiles
 
 from .wis import wis_bracher
 
@@ -461,7 +462,7 @@ def quantile_sum_fast(
                       If provided, will slice E/U to the required k and reuse S.
     """
     if probabilities is None:
-        probabilities = [0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99]
+        probabilities = list(default_quantiles)
 
     k = len(gids)
     rng = np.random.default_rng(seed)

@@ -148,7 +148,7 @@ def test_model_fitting():
         model_kwargs={
             "start_date": start_date,
             "gid_1": gid_1,
-            "horizon": horizon,
+            "horizons": [horizon],
             "covariate_cols": covariate_cols,
             "retrain": retrain,
         },

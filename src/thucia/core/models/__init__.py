@@ -31,7 +31,7 @@ from .utils import samples_to_quantiles
 # the module name (e.g. `sarima.py` -> `sarima(df, ...)`). Helper libraries that
 # live in this directory but do not satisfy that contract must be registered in
 # _HELPER_MODULES so they are not advertised as models.
-_HELPER_MODULES = frozenset({"ensemble"})
+_HELPER_MODULES = frozenset({"ensemble", "quantiles"})
 
 _exports: dict[str, str] = {}
 for _m in pkgutil.iter_modules(__path__):

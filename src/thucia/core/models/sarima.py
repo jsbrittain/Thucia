@@ -131,9 +131,9 @@ def sarima(
     horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
-    retrain: bool = False,  # AutoARIMA at every step
+    retrain: bool = True,  # AutoARIMA at every step
     db_file: str | Path | None = None,
-    model_admin_level: int = 2,  # GID 2 level
+    model_admin_level: int = 0,  # GID level
     num_samples: int | None = None,
     multivariate: bool = False,
     *args,
@@ -165,7 +165,7 @@ def sarima(
         multivariate=False,
     )
     model.set_season_length(season_length=12)
-    model.set_retrain(True)
+    model.set_retrain(retrain)
 
     # Historical predictions
     tdf = model.historical_predictions(

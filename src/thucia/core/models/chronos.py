@@ -16,6 +16,24 @@ try:  # Native chronos package (alternative available through Darts)
 except ImportError:
     Chronos2Pipeline = None
 
+# Chronos (native) supports a fixed subset of quantile levels, so this is a
+# documented subset of the canonical grid in thucia.core.quantiles.
+CHRONOS_QUANTILES = [
+    0.01,
+    0.05,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    0.95,
+    0.99,
+]
+
 
 # -------- Chronos (native implementation) --------
 class ChronosQuantilesNative(DartsBase):
@@ -37,7 +55,9 @@ class ChronosQuantilesNative(DartsBase):
     def pre_fit(self, target_gids=None, **kwargs):
         pass
 
-    def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+    def historical_forecasts(
+        self, ts, cov, start_date=None, retrain=True, horizon=1, **kwargs
+    ):
         if not self.multivariate:
             ts = [ts]
             cov = [cov]
@@ -57,19 +77,19 @@ class ChronosQuantilesNative(DartsBase):
                 t_display = pd.Period(t, freq=self.df["Date"].iloc[0].freq)
 
                 logging.info(f"Forecasting for date: {t_display}...")
-                if tix < self.horizon:
+                if tix < horizon:
                     logging.info("Not enough data to forecast, skipping...")
                     continue
 
                 # Temporal masks
-                input_mask = dates <= dates[tix - self.horizon]
+                input_mask = dates <= dates[tix - horizon]
                 covariate_mask = dates <= t
 
                 context_df = df[input_mask].reset_index()
                 future_df = (
                     df[covariate_mask]
                     .reset_index()
-                    .iloc[-self.horizon :]
+                    .iloc[-horizon:]
                     .reset_index(drop=True)
                 )
                 future_df = future_df.drop(columns=[self.case_col])
@@ -78,7 +98,7 @@ class ChronosQuantilesNative(DartsBase):
                 pred_df = self.model.predict_df(
                     context_df,
                     future_df=future_df,
-                    prediction_length=self.horizon,
+                    prediction_length=horizon,
                     quantile_levels=self.quantiles,
                     id_column="GID_2_codes",
                     timestamp_column="Date",
@@ -92,11 +112,11 @@ class ChronosQuantilesNative(DartsBase):
                 #   '0.01', ..., '0.99', (quantiles)
                 # ]
 
-                times = ts[gix].time_index[covariate_mask][-self.horizon :]
+                times = ts[gix].time_index[covariate_mask][-horizon:]
                 forecasts = (
                     pred_df[map(str, self.quantiles)]
                     .to_numpy()
-                    .reshape(self.horizon, 1, len(self.quantiles))
+                    .reshape(horizon, 1, len(self.quantiles))
                 )
                 output[gix].append(TimeSeries.from_times_and_values(times, forecasts))
 
@@ -145,7 +165,9 @@ class ChronosQuantilesDarts(DartsBase):
             verbose=True,
         )
 
-    def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+    def historical_forecasts(
+        self, ts, cov, start_date=None, retrain=True, horizon=1, **kwargs
+    ):
         logging.info(
             "Generating Chronos-2 historical forecasts "
             f"from {start_date} with retrain={retrain}..."
@@ -153,7 +175,7 @@ class ChronosQuantilesDarts(DartsBase):
         bt = self.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
-            forecast_horizon=self.horizon,
+            forecast_horizon=horizon,
             start=start_date,
             stride=1,
             retrain=retrain,
@@ -172,7 +194,7 @@ def chronos(
     train_start_date: str | pd.Timestamp = pd.Timestamp.min,
     train_end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
-    horizon: int = 1,
+    horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
@@ -193,7 +215,7 @@ def chronos(
             df=df,
             case_col=case_col,
             covariate_cols=covariate_cols,
-            horizon=horizon,
+            horizons=horizons,
             db_file=db_file,
             train_start_date=train_start_date,
             train_end_date=train_end_date,
@@ -202,32 +224,17 @@ def chronos(
     else:
         # Using Darts implementation of Chronos (can be surprisingly slow, due to
         # training, but can support admin 1 and admin 0 training)
-        quantiles = [
-            0.01,
-            0.05,
-            0.1,
-            0.2,
-            0.3,
-            0.4,
-            0.5,
-            0.6,
-            0.7,
-            0.8,
-            0.9,
-            0.95,
-            0.99,
-        ]
         model = ChronosQuantilesDarts(
             df=df,
             case_col=case_col,
             covariate_cols=covariate_cols,
-            horizon=horizon,
+            horizons=horizons,
             db_file=db_file,
             train_start_date=train_start_date,
             train_end_date=train_end_date,
             multivariate=multivariate,
             # DARTS quantiles must be a subset of Chronos native quantiles
-            quantiles=quantiles,
+            quantiles=CHRONOS_QUANTILES,
         )
 
     # Historical predictions

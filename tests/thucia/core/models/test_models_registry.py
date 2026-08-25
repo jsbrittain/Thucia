@@ -42,3 +42,61 @@ def test_model_functions_accept_keyword_contract():
 def test_all_modules_import_cleanly():
     for name in _all_module_names():
         importlib.import_module(f"thucia.core.models.{name}")
+
+
+# Keyword set passed by pipeline/analysis_core.py to run_model() for every model.
+COMMON_KWARGS = {
+    "start_date": "2020-01",
+    "gid_1": None,
+    "horizons": [1, 3, 6, 12],
+    "case_col": "Log_Cases",
+    "covariate_cols": ["x"],
+    "model_admin_level": 2,
+    "db_file": None,
+}
+# Extra kwargs added for the darts-based models.
+DARTS_KWARGS = {
+    "train_end_date": "2022-01",
+    "retrain": False,
+    "multivariate": False,
+    "num_samples": 200,
+}
+DARTS_MODELS = {"tcn", "tft", "nbeats", "nhits", "xgboost"}
+# Models with *args/**kwargs swallow anything; inla is container-based with its own
+# interface, so exclude it from the shared forecasting contract.
+LOOSE_MODELS = {"baseline", "sarima", "movavg", "timesfm"}
+
+
+def _model_set():
+    return set(models.__all__) - LOOSE_MODELS - {"inla"}
+
+
+def test_all_models_bind_common_kwargs():
+    for name in _model_set():
+        sig = inspect.signature(getattr(models, name))
+        sig.bind_partial(**COMMON_KWARGS)  # raises TypeError on unknown kwargs
+
+
+def test_darts_models_bind_full_pipeline_kwargs():
+    for name in DARTS_MODELS:
+        sig = inspect.signature(getattr(models, name))
+        kw = {**COMMON_KWARGS, **DARTS_KWARGS}
+        sig.bind_partial(**kw)
+
+
+def test_chronos_binds_pipeline_kwargs_without_num_samples():
+    # chronos has no num_samples parameter; the pipeline deliberately skips it
+    sig = inspect.signature(getattr(models, "chronos"))
+    kw = {**COMMON_KWARGS, **DARTS_KWARGS}
+    kw.pop("num_samples")
+    sig.bind_partial(**kw)
+
+
+def test_horizons_default_is_a_list():
+    # All models share a list-form `horizons` default (never a scalar `horizon`)
+    for name in models.__all__:
+        if name in LOOSE_MODELS or name == "inla":
+            continue
+        sig = inspect.signature(getattr(models, name))
+        p = sig.parameters["horizons"]
+        assert p.default == [1], f"{name}.horizons default should be [1]"
