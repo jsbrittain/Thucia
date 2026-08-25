@@ -652,7 +652,8 @@ def quantile_sum_gid(
         gids = df_gid1[gid_col].unique()
         # use slice of shared_draws for this group
         # (quantile_sum_fast will slice shared_draws internally)
-        for horizon in [1, 3, 6, 12]:
+        horizons = df_gid1["horizon"].unique()
+        for horizon in horizons:
             dates = df_gid1["Date"].unique()
             for date in dates:
                 logging.info(
