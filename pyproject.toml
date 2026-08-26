@@ -71,4 +71,5 @@ filterwarnings = [
     "ignore:.*stochastic TimeSeries.*:Warning",
     "ignore:.*invalid escape sequence.*:Warning",
     "ignore:.*non-interactive.*:Warning",
+    "ignore:.*keep_geom_type.*dropped geometries.*:UserWarning",
 ]

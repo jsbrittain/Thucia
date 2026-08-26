@@ -138,3 +138,79 @@ def test_plot_cases_per_month_runs(project, admin2_list, monkeypatch):
     import matplotlib.pyplot as plt
 
     assert len(plt.get_fignums()) > 0
+
+
+def test_plot_cases_per_week_runs(project, admin2_list, monkeypatch):
+    monkeypatch.setattr("thucia.core.geo.get_admin2_list", lambda iso3: admin2_list)
+    write_db(_line_list(), project / "cases")
+    steps.cases_per_week(project="proj", projects_root=project.parent)
+    steps.plot_cases_per_week(project="proj", projects_root=project.parent)
+    import matplotlib.pyplot as plt
+
+    assert len(plt.get_fignums()) > 0
+
+
+def test_plot_cases_per_day_runs(project, admin2_list, monkeypatch):
+    monkeypatch.setattr("thucia.core.geo.get_admin2_list", lambda iso3: admin2_list)
+    write_db(_line_list(), project / "cases")
+    steps.cases_per_day(project="proj", projects_root=project.parent)
+    steps.plot_cases_per_day(project="proj", projects_root=project.parent)
+    import matplotlib.pyplot as plt
+
+    assert len(plt.get_fignums()) > 0
+
+
+def test_main_dispatches_plot_cases_per_month(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+
+    monkeypatch.setattr("thucia.cli.steps.plot_cases_per_month", fake)
+    main(["plot-cases-per-month", "--project", "p", "--title", "T"])
+    assert calls["project"] == "p"
+    assert calls["title"] == "T"
+
+
+def test_main_dispatches_cases_per_week(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+
+    monkeypatch.setattr("thucia.cli.steps.cases_per_week", fake)
+    main(["cases-per-week", "--project", "p"])
+    assert calls["project"] == "p"
+
+
+def test_main_dispatches_plot_cases_per_week(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+
+    monkeypatch.setattr("thucia.cli.steps.plot_cases_per_week", fake)
+    main(["plot-cases-per-week", "--project", "p"])
+    assert calls["project"] == "p"
+
+
+def test_main_dispatches_cases_per_day(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+
+    monkeypatch.setattr("thucia.cli.steps.cases_per_day", fake)
+    main(["cases-per-day", "--project", "p"])
+    assert calls["project"] == "p"
+
+
+def test_main_dispatches_plot_cases_per_day(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+
+    monkeypatch.setattr("thucia.cli.steps.plot_cases_per_day", fake)
+    main(["plot-cases-per-day", "--project", "p"])
+    assert calls["project"] == "p"

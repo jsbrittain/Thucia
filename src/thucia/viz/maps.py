@@ -254,6 +254,7 @@ def hexmap(
         hex_values = (
             assigned.groupby("hex_id")[value_col].agg("mean").reset_index()
         )  # mean by default; could use sum
+        hex_values = hex_values.rename(columns={value_col: "value"})
         hexmap = hex_gdf.merge(hex_values, on="hex_id", how="left")
     else:
         # area-weighted aggregation (more accurate)
@@ -279,7 +280,8 @@ def hexmap(
                     {
                         "value": (d[value_col] * d["area"]).sum() / d["area"].sum(),
                     }
-                )
+                ),
+                include_groups=False,
             )
             .reset_index()
         )
@@ -294,6 +296,8 @@ def hexmap(
     ax.set_axis_off()
     if ax is None:
         plt.show()
+
+    return hexmap
 
 
 def hex_cartogram(
@@ -446,6 +450,8 @@ def hex_cartogram(
     ax.set_axis_off()
     if ax is None:
         plt.show()
+
+    return result
 
 
 def subset_regions(
