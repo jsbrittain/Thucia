@@ -1,4 +1,5 @@
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import List
 from typing import Optional
@@ -481,12 +482,37 @@ def residual_regression(
 
     provinces = df_model[geo_col].unique()
     df_predictors = df_predictors[df_predictors[geo_col].isin(provinces)]
+    dupes = df_predictors.loc[df_predictors[geo_col].duplicated(), geo_col].unique()
+    if len(dupes):
+        # Duplicate geo codes indicate an encoding error in the embeddings
+        # file; warn and keep the first occurrence of each code.
+        warnings.warn(
+            f"Embeddings contain duplicate '{geo_col}' codes: {list(dupes)[:5]}"
+            " — this indicates an encoding error; keeping the first occurrence.",
+            UserWarning,
+            stacklevel=2,
+        )
+        df_predictors = df_predictors.drop_duplicates(subset=[geo_col])
     df_predictors.set_index(geo_col, inplace=True)
     feature_cols = [c for c in df_predictors.columns if c.startswith("feature")]
     df_predictors = df_predictors[feature_cols]
-    assert set(df_predictors.index.unique()) == set(df_model[geo_col]), (
-        "Model and embeddings must contain the same geographic codes."
-    )
+    embedding_gids = set(df_predictors.index.unique())
+    missing = set(df_model[geo_col]) - embedding_gids
+    if missing:
+        # Some provinces have no embeddings: warn and continue on the rest
+        # (mirrors the old analysis_core.py call-site subsampling).
+        warnings.warn(
+            f"No embeddings for {len(missing)} geo code(s): "
+            f"{sorted(missing)[:5]}{'...' if len(missing) > 5 else ''} "
+            "— continuing with the provinces that have embeddings.",
+            UserWarning,
+            stacklevel=2,
+        )
+        df_model = df_model[df_model[geo_col].isin(embedding_gids)]
+        if df_model.empty:
+            raise ValueError(
+                "No model provinces have embeddings; cannot run residual regression."
+            )
 
     adapter = None
     if method == "ridge":

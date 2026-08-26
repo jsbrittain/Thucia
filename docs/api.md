@@ -47,6 +47,22 @@ a thin, data-in/data-out function configured by
 .. autofunction:: thucia.core.cases.write_nc
 ```
 
+## PDFM embeddings
+
+PDFM embeddings are **not publicly distributed** — they must be supplied by
+the user as a NetCDF file with one row per admin region: a geo-code column
+(such as `GID_2`) plus `feature0`..`feature329` embedding columns. Load a file
+with {func}`thucia.core.cases.prepare_pdfm_embeddings` (which can restrict to
+a subset of provinces and dedupes geo codes), then feed the frame to
+{func}`thucia.core.pipeline.apply_residual_regression` to correct per-region
+forecast bias. Provinces without embeddings are dropped with a warning and
+regression continues on the rest.
+
+```{eval-rst}
+.. autofunction:: thucia.core.cases.prepare_pdfm_embeddings
+.. autofunction:: thucia.core.cases.prepare_embeddings
+```
+
 ## Scoring
 
 ```{eval-rst}

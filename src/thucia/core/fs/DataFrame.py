@@ -296,8 +296,9 @@ class DataFrame:
 
     def write_df(self, df: pd.DataFrame, con=None):
         """Write a pandas DataFrame to the DuckDB table, replacing existing data.
+
         Minimal metadata support: detects Period dtypes and stores column_name
-         -> freq in __column_metadata__.
+        -> freq in __column_metadata__.
         """
         df_to_write, meta = self._prepare_df(df)
 

@@ -1,7 +1,9 @@
 import logging
 import re
 import subprocess
+import warnings
 from itertools import product
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -339,11 +341,40 @@ def run_job(cmd: list[str], cwd: str | None = None) -> None:
 
 
 def prepare_pdfm_embeddings(
-    pdfm_filename: str | None = None,
+    pdfm_filename: str | Path,
     provinces: list[str] | None = None,
+    geo_col: str = "GID_2",
 ) -> pd.DataFrame:
-    # Load PDFM embeddings
-    return read_nc(pdfm_filename)
+    """Load user-supplied PDFM embeddings from a NetCDF file.
+
+    PDFM embeddings are **not publicly distributed**; the file must be provided
+    by the user. Expected schema: one row per admin region with a geo code
+    column (default ``GID_2``) plus ``feature0``..``feature329`` embedding
+    columns. The embedded dimensions are batched:
+
+        0-127    Aggregated Search Trends
+        128-255  Maps and Busyness
+        256-329  Weather & Air Quality
+
+    When ``provinces`` is given, only rows whose geo code is listed are kept.
+    Duplicate geo codes are an encoding error: a warning is emitted and the
+    first occurrence of each geo code is kept.
+    """
+    df = read_nc(pdfm_filename)
+    if geo_col not in df.columns:
+        raise ValueError(f"Embeddings file must contain a '{geo_col}' column.")
+    if provinces is not None:
+        df = df[df[geo_col].isin(provinces)]
+    n_dupes = int(df[geo_col].duplicated().sum())
+    if n_dupes:
+        warnings.warn(
+            f"Embeddings contain {n_dupes} duplicate '{geo_col}' row(s); "
+            "this indicates an encoding error. Keeping the first occurrence "
+            "of each geo code.",
+            UserWarning,
+            stacklevel=2,
+        )
+    return df.drop_duplicates(subset=[geo_col])
 
 
 def prepare_embeddings(filename: str, embedding_type="pdfm") -> pd.DataFrame:
