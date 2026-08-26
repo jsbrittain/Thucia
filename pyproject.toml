@@ -63,3 +63,12 @@ markers = [
     "slow: heavy real model fits (run explicitly with `uv run pytest -m slow`)",
 ]
 addopts = "-m 'not slow'"
+filterwarnings = [
+    "ignore:.*'pin_memory'.*:Warning",
+    "ignore:.*Non-invertible.*:Warning",
+    "ignore:.*Maximum Likelihood optimization failed.*:Warning",
+    "ignore:.*treespec.*LeafSpec.*:Warning",
+    "ignore:.*stochastic TimeSeries.*:Warning",
+    "ignore:.*invalid escape sequence.*:Warning",
+    "ignore:.*non-interactive.*:Warning",
+]

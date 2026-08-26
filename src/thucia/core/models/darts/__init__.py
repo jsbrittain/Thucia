@@ -154,7 +154,7 @@ class DartsBase:
                 (df[self.geo_col] == gid)
                 & (df["Date"] >= start_date)
                 & (df["Date"] <= end_date)
-            ]
+            ].copy()
             freq = "ME"
             # darts requires timestamp
             gdf["Date"] = (
@@ -272,66 +272,6 @@ class DartsBase:
 
         return tdf
 
-    def _extract_horizons(
-        self,
-        bt,
-        gid,
-    ):
-        # process horizons separately
-        rows = []
-        for h in self.horizons:
-            vals = np.concat([TimeSeries.all_values(t)[h, :, :] for t in bt])
-            dates = np.array([t.time_index[h] for t in bt])
-
-            out = pd.DataFrame(vals)
-            out["Date"] = dates
-            out = out.melt(
-                id_vars="Date",
-                var_name="sample",  # may be quantiles, renamed later
-                value_name="prediction",
-            )
-            out["sample"] = out["sample"].astype(int)
-            out[self.geo_col] = gid
-
-            if not self.sampling_method or self.sampling_method == "samples":
-                if len(out) > 1:
-                    # samples to quantiles
-                    out = (
-                        pd.concat(
-                            {
-                                k: sample_to_quantiles_vec(
-                                    np.expm1(g["prediction"]).clip(
-                                        lower=0
-                                    ),  # transform before quantiles
-                                    self.quantiles,
-                                )
-                                for k, g in out.groupby(
-                                    ["Date", self.geo_col], observed=False
-                                )
-                            },
-                            names=["Date", self.geo_col],
-                        )
-                        .reset_index()
-                        .rename(columns={"value": "prediction"})
-                        .drop(columns=["level_2"])
-                    )
-                    out["horizon"] = h + 1  # 1-based horizon
-                else:
-                    out["quantile"] = 0.5
-                    out["horizon"] = h + 1  # 1-based horizon
-                    out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                    out = out.drop(columns=["sample"])
-            elif self.sampling_method == "quantiles":
-                out = out.rename(columns={"sample": "quantile"})
-                out["quantile"] = out["quantile"].apply(lambda x: self.quantiles[x])
-                out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                out["horizon"] = h + 1  # 1-based horizon
-            else:
-                raise ValueError(f"Unknown sampling_method '{self.sampling_method}'")
-
-            rows.append(out)
-        return rows
-
     def _merge_cases(
         self,
         df: pd.DataFrame,
@@ -339,7 +279,7 @@ class DartsBase:
     ) -> pd.DataFrame:
         # Ensure Date is in original format
         freq = df["Date"].dtype.freq.freqstr[0]
-        if not pd.api.types.is_period_dtype(preds["Date"]):
+        if not isinstance(preds["Date"].dtype, pd.PeriodDtype):
             # Coerce to period
             preds["Date"] = preds["Date"].dt.to_period(freq)
         elif preds["Date"].dtype.freq.freqstr != freq:

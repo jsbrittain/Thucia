@@ -179,7 +179,9 @@ def apply_weights_to_forecasts(df, weights_df, quantiles, lag=1):
 
         df_preds = (
             pd.concat(df_preds, ignore_index=True)
-            .groupby(["GID_2", "quantile"], as_index=False)["prediction"]
+            .groupby(["GID_2", "quantile"], as_index=False, observed=False)[
+                "prediction"
+            ]
             .sum()
         )
 
@@ -210,7 +212,7 @@ def fix_quantile_violations(df, tolerance=1e-8):
 
     df_fixed = (
         df.groupby(["GID_2", "Date"], group_keys=False)
-        .apply(fix_group)
+        .apply(fix_group, include_groups=False)
         .reset_index(drop=True)
     )
     return df_fixed

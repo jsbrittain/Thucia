@@ -207,10 +207,10 @@ def sanitise_covariates(df, covariate_cols, start_date, gid_col="GID_2"):
     # Covariate sanitisation
     for c in covariate_cols:
         # NaN replacement: seasonal mean, forward and back fill
-        df[c] = df.groupby([gid_col, df["Date"].dt.month])[c].transform(
+        df[c] = df.groupby([gid_col, df["Date"].dt.month], observed=False)[c].transform(
             lambda s: s.fillna(s.mean())
         )
-        df[c] = df.groupby(gid_col)[c].ffill().bfill()
+        df[c] = df.groupby(gid_col, observed=False)[c].ffill().bfill()
         # Standardise using pre- start date values
         mask = df["Date"] < start_date
         if False:

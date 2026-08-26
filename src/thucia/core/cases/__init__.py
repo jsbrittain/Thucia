@@ -219,25 +219,24 @@ def r2(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict =
 
     r2_gid = pd.DataFrame(columns=[group_col, "R2"])
     groups = df[group_col].unique()
+    parts = []
     for group in groups:
         dfg = df[df[group_col] == group].copy()
-        r2_gid = pd.concat(
-            [
-                r2_gid,
-                pd.DataFrame(
-                    {
-                        group_col: [group],
-                        "R2": [
-                            r2_score(
-                                dfg[true_col],
-                                dfg[pred_col],
-                            )
-                        ],
-                    }
-                ),
-            ],
-            ignore_index=True,
+        parts.append(
+            pd.DataFrame(
+                {
+                    group_col: [group],
+                    "R2": [
+                        r2_score(
+                            dfg[true_col],
+                            dfg[pred_col],
+                        )
+                    ],
+                }
+            )
         )
+    if parts:
+        r2_gid = pd.concat(parts, ignore_index=True)
     return r2_gid
 
 
