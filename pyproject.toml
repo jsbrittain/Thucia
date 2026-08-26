@@ -61,8 +61,9 @@ all = [
 [tool.pytest.ini_options]
 markers = [
     "slow: heavy real model fits (run explicitly with `uv run pytest -m slow`)",
+    "network: requires a network download (e.g. timesfm checkpoint); excluded from CI",
 ]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow' -p thucia_pytest_bootstrap"
 filterwarnings = [
     "ignore:.*'pin_memory'.*:Warning",
     "ignore:.*Non-invertible.*:Warning",

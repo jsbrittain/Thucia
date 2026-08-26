@@ -14,7 +14,9 @@ def _series(values):
 
 
 def test_shift_op():
-    out = _apply_pipeline_to_group(_series([1.0, 2.0, 3.0, 4.0]), [{"op": "shift", "periods": 1}])
+    out = _apply_pipeline_to_group(
+        _series([1.0, 2.0, 3.0, 4.0]), [{"op": "shift", "periods": 1}]
+    )
     assert np.isnan(out.iloc[0])
     assert out.iloc[1:].tolist() == [1.0, 2.0, 3.0]
 
@@ -58,16 +60,16 @@ def test_diff_op():
 
 
 def test_pct_change_op():
-    out = _apply_pipeline_to_group(_series([100.0, 110.0, 110.0]), [{"op": "pct_change"}])
+    out = _apply_pipeline_to_group(
+        _series([100.0, 110.0, 110.0]), [{"op": "pct_change"}]
+    )
     assert np.isnan(out.iloc[0])
     assert out.iloc[1] == pytest.approx(0.1)
     assert out.iloc[2] == pytest.approx(0.0)
 
 
 def test_ema_op():
-    out = _apply_pipeline_to_group(
-        _series([1.0, 2.0, 3.0]), [{"op": "ema", "span": 2}]
-    )
+    out = _apply_pipeline_to_group(_series([1.0, 2.0, 3.0]), [{"op": "ema", "span": 2}])
     # ewm(span=2, adjust=False): alpha = 2/(span+1) = 2/3, y_t = alpha*x_t + (1-alpha)*y_{t-1}
     assert out.iloc[0] == pytest.approx(1.0)
     assert out.iloc[1] == pytest.approx(2.0 / 3 * 2 + 1.0 / 3 * 1.0)  # 5/3
@@ -94,7 +96,9 @@ def test_clip_op():
 
 
 def test_lambda_op():
-    out = _apply_pipeline_to_group(_series([0.0, 1.0, 2.0]), [{"op": "lambda", "func": np.log1p}])
+    out = _apply_pipeline_to_group(
+        _series([0.0, 1.0, 2.0]), [{"op": "lambda", "func": np.log1p}]
+    )
     assert out.tolist() == [0.0, np.log(2), np.log(3)]
 
 
@@ -107,7 +111,13 @@ def test_build_features_no_groupby():
     df = pd.DataFrame({"Date": range(4), "Cases": [1.0, 2.0, 3.0, 4.0]})
     out = build_features(
         df,
-        [{"name": "lag1", "column": "Cases", "pipeline": [{"op": "shift", "periods": 1}]}],
+        [
+            {
+                "name": "lag1",
+                "column": "Cases",
+                "pipeline": [{"op": "shift", "periods": 1}],
+            }
+        ],
     )
     assert np.isnan(out.loc[0, "lag1"])
     assert out["lag1"].iloc[1:].tolist() == [1.0, 2.0, 3.0]
@@ -148,7 +158,13 @@ def test_build_features_reindexes_to_input():
     )
     out = build_features(
         df,
-        [{"name": "lag1", "column": "Cases", "pipeline": [{"op": "shift", "periods": 1}]}],
+        [
+            {
+                "name": "lag1",
+                "column": "Cases",
+                "pipeline": [{"op": "shift", "periods": 1}],
+            }
+        ],
     )
     assert out.index.tolist() == [7, 8, 9, 10]
     assert out.loc[8, "lag1"] == 1.0

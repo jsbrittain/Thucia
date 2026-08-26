@@ -16,9 +16,8 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-
-from thucia.core.pipeline import PipelineConfig
 from thucia.core.pipeline import fit_model as _fit_model
+from thucia.core.pipeline import PipelineConfig
 from thucia.core.pipeline import score_model
 
 # Models that are cheap enough to fit across many backtest windows.
@@ -152,9 +151,14 @@ def _skill_vs_reference(
             )
         except ValueError:
             continue
-        scored = score_model(holdout, dataclasses.replace(config, train_end_date=cutoff))
+        scored = score_model(
+            holdout, dataclasses.replace(config, train_end_date=cutoff)
+        )
         ref_rows.append(
-            scored.groupby("horizon", observed=False)["WIS"].mean().reset_index().assign(cutoff=cutoff)
+            scored.groupby("horizon", observed=False)["WIS"]
+            .mean()
+            .reset_index()
+            .assign(cutoff=cutoff)
         )
 
     if not ref_rows:
@@ -254,9 +258,12 @@ def run_backtest(
                 how="left",
             )
             score_rows.append(scored)
-            model_wis_by_cutoff[cutoff] = scored.groupby("horizon", observed=False)[
-                "WIS"
-            ].mean().reset_index().assign(cutoff=cutoff)
+            model_wis_by_cutoff[cutoff] = (
+                scored.groupby("horizon", observed=False)["WIS"]
+                .mean()
+                .reset_index()
+                .assign(cutoff=cutoff)
+            )
             if bt.keep_forecasts:
                 forecasts[cutoff] = holdout
 

@@ -71,6 +71,7 @@ def test_xgboost_multihorizon():
     assert np.isfinite(out["prediction"]).all()
 
 
+@pytest.mark.network
 def test_timesfm_forecast_requires_torch_and_network(df):
     # TimesFM downloads a HuggingFace checkpoint; opt-in only.
     pytest.importorskip("torch")

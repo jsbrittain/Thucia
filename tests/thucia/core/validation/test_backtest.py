@@ -23,7 +23,13 @@ def inputs():
                 0.0,
             )
             rows.append(
-                {"Date": d, "GID_1": "G.1_1", "GID_2": g, "future": False, "Cases": cases}
+                {
+                    "Date": d,
+                    "GID_1": "G.1_1",
+                    "GID_2": g,
+                    "future": False,
+                    "Cases": cases,
+                }
             )
     df = pd.DataFrame(rows)
     df["GID_2"] = df["GID_2"].astype("category")
@@ -125,7 +131,9 @@ def test_expand_cutoffs_empty_when_too_short():
 
 def test_run_backtest_schema_and_finite_scores(inputs):
     res = run_backtest(
-        inputs, _cfg(horizons=(1,)), BacktestConfig(model_name="baseline", min_history=24, step=3)
+        inputs,
+        _cfg(horizons=(1,)),
+        BacktestConfig(model_name="baseline", min_history=24, step=3),
     )
     assert set(res.scores.columns) >= {
         "cutoff",
@@ -158,7 +166,9 @@ def test_run_backtest_explicit_cutoffs(inputs):
 
 
 def test_run_backtest_keep_forecasts(inputs):
-    bt = BacktestConfig(model_name="baseline", min_history=24, step=6, keep_forecasts=True)
+    bt = BacktestConfig(
+        model_name="baseline", min_history=24, step=6, keep_forecasts=True
+    )
     res = run_backtest(inputs, _cfg(horizons=(1,)), bt)
     assert res.forecasts is not None
     for cutoff, frame in res.forecasts.items():
@@ -167,7 +177,9 @@ def test_run_backtest_keep_forecasts(inputs):
 
 def test_run_backtest_rolling_window_runs(inputs):
     expanding = run_backtest(
-        inputs, _cfg(horizons=(1,)), BacktestConfig(model_name="baseline", min_history=24, step=4)
+        inputs,
+        _cfg(horizons=(1,)),
+        BacktestConfig(model_name="baseline", min_history=24, step=4),
     )
     rolling = run_backtest(
         inputs,
@@ -181,7 +193,9 @@ def test_run_backtest_rolling_window_runs(inputs):
 def test_run_backtest_does_not_litter_caller_directory(inputs, tmp_path):
     # Model fits persist quantile duckdb files internally; the backtest must
     # keep them in a scratch dir and never touch the caller's filesystem.
-    cfg = PipelineConfig(path=tmp_path, horizons=[1], start_date=pd.Period("2016-01", freq="M"))
+    cfg = PipelineConfig(
+        path=tmp_path, horizons=[1], start_date=pd.Period("2016-01", freq="M")
+    )
     run_backtest(
         inputs, cfg, BacktestConfig(model_name="baseline", min_history=24, step=6)
     )

@@ -57,7 +57,8 @@ def test_get_model_unknown_raises():
         models.get_model("not_a_model")
 
 
-# Keyword set passed by pipeline/analysis_core.py to run_model() for every model.
+# Keyword set passed by thucia.core.pipeline.fit_model / run_backtest to
+# run_model() for every model.
 COMMON_KWARGS = {
     "start_date": "2020-01",
     "gid_1": None,

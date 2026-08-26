@@ -1,7 +1,6 @@
 # Probing tests for the WorldClim covariate source (geo/sources/worldclim.py).
 # No network and no real raster: downloads, zonal stats, and cache all run
 # against mocked/fake artifacts in a tmp cache folder.
-import contextlib
 import io
 import zipfile
 from pathlib import Path
@@ -9,7 +8,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-
 import thucia.core.geo.sources.worldclim as worldclim
 
 
@@ -97,7 +95,9 @@ def test_get_filename_cru_downloads_and_extracts(wc, monkeypatch, tmp_path):
         content = _zip_with(tif_name)
 
     calls = []
-    monkeypatch.setattr(worldclim.requests, "get", lambda url: calls.append(url) or FakeResp())
+    monkeypatch.setattr(
+        worldclim.requests, "get", lambda url: calls.append(url) or FakeResp()
+    )
 
     tif = wc._get_filename_cru("tmin", 2020, 1)
     assert tif.name == tif_name
@@ -111,12 +111,16 @@ def test_get_filename_cru_uses_cached_file(wc, monkeypatch):
     tif.parent.mkdir(parents=True, exist_ok=True)
     tif.touch()
 
-    monkeypatch.setattr(worldclim.requests, "get", lambda url: pytest.fail("no download"))
+    monkeypatch.setattr(
+        worldclim.requests, "get", lambda url: pytest.fail("no download")
+    )
     assert wc._get_filename_cru("tmin", 2020, 1) == tif
 
 
 def test_get_filename_cru_year_beyond_max_raises(wc, monkeypatch):
-    monkeypatch.setattr(worldclim.requests, "get", lambda url: pytest.fail("no download"))
+    monkeypatch.setattr(
+        worldclim.requests, "get", lambda url: pytest.fail("no download")
+    )
     with pytest.raises(ValueError, match="beyond the maximum"):
         wc._get_filename_cru("tmin", 2025, 1)
 
@@ -257,7 +261,9 @@ def test_merge_specific_metric_and_measures(wc, case_df, monkeypatch):
         wc, "get_filename", lambda metric, year, month: ("fake.tif", "CRU-TS")
     )
     monkeypatch.setattr(
-        worldclim, "raster_stats_gid2", lambda tif, gids: _fake_stat(gids, mean_value=10.0)
+        worldclim,
+        "raster_stats_gid2",
+        lambda tif, gids: _fake_stat(gids, mean_value=10.0),
     )
     out = wc.merge(case_df, metrics=["tmin"], measures=["mean"])
     assert "tmin" in out.columns
@@ -270,12 +276,16 @@ def test_merge_use_cache_serves_cached_records(wc, case_df, monkeypatch):
     for date in pd.to_datetime(["2020-01-31", "2020-02-29"]):
         wc._add_cache_records(
             "tmin",
-            _fake_stat(["X.1.1_2", "X.1.2_2"], mean_value=7.5).assign(Date=date, source="CRU-TS"),
+            _fake_stat(["X.1.1_2", "X.1.2_2"], mean_value=7.5).assign(
+                Date=date, source="CRU-TS"
+            ),
         )
 
     # If the cache is hit, neither downloads nor zonal stats should run.
     monkeypatch.setattr(wc, "get_filename", lambda *a, **k: pytest.fail("download"))
-    monkeypatch.setattr(worldclim, "raster_stats_gid2", lambda *a, **k: pytest.fail("stats"))
+    monkeypatch.setattr(
+        worldclim, "raster_stats_gid2", lambda *a, **k: pytest.fail("stats")
+    )
 
     out = wc.merge(case_df, metrics=["tmin"], use_cache=True)
     assert "tmin" in out.columns
@@ -290,7 +300,9 @@ def test_merge_skips_missing_raster_dates(wc, case_df, monkeypatch):
 
     monkeypatch.setattr(wc, "get_filename", get_filename)
     monkeypatch.setattr(
-        worldclim, "raster_stats_gid2", lambda tif, gids: _fake_stat(gids, mean_value=3.0)
+        worldclim,
+        "raster_stats_gid2",
+        lambda tif, gids: _fake_stat(gids, mean_value=3.0),
     )
     out = wc.merge(case_df, metrics=["tmin"])
     # Only the January raster exists -> only those rows are filled.

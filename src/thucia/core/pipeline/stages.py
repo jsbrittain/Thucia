@@ -2,9 +2,9 @@
 #
 # These wrap the library primitives (aggregation, geo padding, covariate
 # merging, model input prep, model fitting, scoring) into the stage functions
-# that `pipeline/analysis_core.py` uses as its use-case example. They are
-# deliberately thin, data-in/data-out functions so they can be tested in
-# isolation and reused by other entry points (e.g. the CLI).
+# consumed by `thucia.core.validation.run_backtest` and other entry points.
+# They are deliberately thin, data-in/data-out functions so they can be tested
+# in isolation and reused.
 from __future__ import annotations
 
 from pathlib import Path
