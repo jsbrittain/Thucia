@@ -39,9 +39,7 @@ def _baseline(measure="quantiles"):
 
 
 def test_plot_all_admin2_quantiles(monkeypatch, admin2_list):
-    monkeypatch.setattr(
-        "thucia.viz.get_admin2_list", lambda iso3: admin2_list
-    )
+    monkeypatch.setattr("thucia.viz.get_admin2_list", lambda iso3: admin2_list)
     # no exception -> happy path rendered on the Agg backend
     viz.plot_all_admin2(_baseline())
 
@@ -54,40 +52,30 @@ def test_plot_all_admin2_multiple_iso3_raises(monkeypatch):
 
 
 def test_plot_all_admin2_samples_not_implemented(monkeypatch, admin2_list):
-    monkeypatch.setattr(
-        "thucia.viz.get_admin2_list", lambda iso3: admin2_list
-    )
+    monkeypatch.setattr("thucia.viz.get_admin2_list", lambda iso3: admin2_list)
     with pytest.raises(NotImplementedError, match="Samples measure"):
         viz.plot_all_admin2(_baseline(), measure="samples")
 
 
 def test_plot_all_admin2_unknown_measure_raises(monkeypatch, admin2_list):
-    monkeypatch.setattr(
-        "thucia.viz.get_admin2_list", lambda iso3: admin2_list
-    )
+    monkeypatch.setattr("thucia.viz.get_admin2_list", lambda iso3: admin2_list)
     with pytest.raises(ValueError, match="Unknown measure"):
         viz.plot_all_admin2(_baseline(), measure="bogus")
 
 
 def test_plot_all_admin2_gid1_filter(monkeypatch, admin2_list):
-    monkeypatch.setattr(
-        "thucia.viz.get_admin2_list", lambda iso3: admin2_list
-    )
+    monkeypatch.setattr("thucia.viz.get_admin2_list", lambda iso3: admin2_list)
     viz.plot_all_admin2(_baseline(), gid_1=["X.1_1"])
 
 
 def test_plot_all_admin2_transform_applied(monkeypatch, admin2_list):
-    monkeypatch.setattr(
-        "thucia.viz.get_admin2_list", lambda iso3: admin2_list
-    )
+    monkeypatch.setattr("thucia.viz.get_admin2_list", lambda iso3: admin2_list)
     viz.plot_all_admin2(_baseline(), transform=lambda x: x * 2)
 
 
 def test_plot_ensemble_weights_missing_date_col_raises():
     with pytest.raises(ValueError, match="must be a column"):
-        viz.plot_ensemble_weights_over_time(
-            pd.DataFrame({"model_a": [0.5, 0.5]})
-        )
+        viz.plot_ensemble_weights_over_time(pd.DataFrame({"model_a": [0.5, 0.5]}))
 
 
 def test_plot_ensemble_weights_ma_window(monkeypatch):

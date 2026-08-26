@@ -183,6 +183,8 @@ def score_model(
     parts = []
     for h in config.horizons:
         dfh = df_quantiles[df_quantiles["horizon"] == h].copy()
+        if dfh.empty:
+            continue
         dfh["prediction"] = np.log1p(dfh["prediction"])
         dfh["Cases"] = np.log1p(dfh["Cases"])
         scored = wis(dfh, "prediction", "Cases", geo_col=geo_col)

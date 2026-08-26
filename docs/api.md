@@ -71,3 +71,16 @@ self-register through a shared registry primitive.
 .. automodule:: thucia.core.geo.plugin_base
    :members: SourceBase, source_registry
 ```
+
+## Validation
+
+Backtesting over the pipeline stages: cut the history at a sweep of cutoff
+dates, fit on the past only, score the held-out window, and aggregate
+WIS/RMSE/R2 per horizon (plus skill relative to a reference model).
+
+```{eval-rst}
+.. autofunction:: thucia.core.validation.expand_cutoffs
+.. autoclass:: thucia.core.validation.BacktestConfig
+.. autofunction:: thucia.core.validation.run_backtest
+.. autoclass:: thucia.core.validation.BacktestResult
+```

@@ -2,7 +2,6 @@
 # GADM GeoPackage and raster access are mocked (no network, no real raster).
 import pandas as pd
 import pytest
-
 import thucia.core.geo.stats as stats
 
 
@@ -86,7 +85,9 @@ def test_raster_stats_gid2_multi_stats(polygons, monkeypatch, tmp_path):
 
     monkeypatch.setattr(stats, "zonal_stats", fake_zonal_stats)
 
-    out = stats.raster_stats_gid2("some.tif", ["X.1.1_2", "X.1.2_2"], stats=["mean", "count"])
+    out = stats.raster_stats_gid2(
+        "some.tif", ["X.1.1_2", "X.1.2_2"], stats=["mean", "count"]
+    )
 
     assert out["mean"].tolist() == [1.0, 2.0]
     assert out["count"].tolist() == [3, 5]

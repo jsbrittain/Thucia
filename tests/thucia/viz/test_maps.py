@@ -182,7 +182,9 @@ def test_choropleth_applies_transform_and_colorbar(monkeypatch, tmp_path, geo_gd
     monkeypatch.setattr(maps.gpd, "read_file", lambda *a, **k: geo_gdf)
     df = _value_df(geo_gdf)
     fig, ax = matplotlib.pyplot.subplots()
-    maps.choropleth(df, admin_level=2, ax=ax, value_transform=lambda x: x * 100, colorbar=True)
+    maps.choropleth(
+        df, admin_level=2, ax=ax, value_transform=lambda x: x * 100, colorbar=True
+    )
     matplotlib.pyplot.close(fig)
 
 

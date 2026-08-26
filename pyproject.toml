@@ -72,4 +72,5 @@ filterwarnings = [
     "ignore:.*invalid escape sequence.*:Warning",
     "ignore:.*non-interactive.*:Warning",
     "ignore:.*keep_geom_type.*dropped geometries.*:UserWarning",
+    "ignore:.*does not have valid feature names.*:UserWarning",
 ]

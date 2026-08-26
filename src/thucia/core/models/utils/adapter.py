@@ -42,9 +42,15 @@ def _prepare_fit_table(
 ) -> pd.DataFrame:
     date_col, gid_col, yhat_col = use_cols
     if train_mask is not None:
-        dfm = dfm[train_mask.values]
+        dfm = dfm[train_mask.values].copy()
     if cutoff_date is not None:
-        dfm = dfm[dfm[date_col] <= pd.to_datetime(cutoff_date)]
+        dates = dfm[date_col]
+        if isinstance(dates.dtype, pd.PeriodDtype):
+            # Compare on the same Period grid as the model data
+            cutoff = pd.Period(pd.to_datetime(cutoff_date), freq=dates.dt.freq)
+        else:
+            cutoff = pd.to_datetime(cutoff_date)
+        dfm = dfm[dates <= cutoff].copy()
     if dfm.empty:
         raise ValueError("No rows available to fit adapter after masking/cutoff.")
     dfm["residual"] = dfm[y_col].astype(np.float32) - dfm[yhat_col].astype(np.float32)
