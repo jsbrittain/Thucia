@@ -1,9 +1,9 @@
 import logging
-import re
 
 import numpy as np
 import pandas as pd
 from thucia.core.cases import align_date_types
+from thucia.core.cases import period_freq_str
 
 
 def _season_unit(dates: pd.Series, freq: str) -> pd.Series:
@@ -49,7 +49,7 @@ def movavg(
     ).to_timestamp(how="end")
 
     # Interpolate date range, ensuring we don't skip any gaps in the data
-    freq = re.search(r"period\[(.+)\]", str(df["Date"].dtype.name)).group(1)
+    freq = period_freq_str(df["Date"].dtype)
     freq_ts = "ME" if freq == "M" else freq  # pandas timestamp alias for month-end
     date_range = pd.date_range(
         start=start_date - pd.DateOffset(years=5),  # need 5 years of history

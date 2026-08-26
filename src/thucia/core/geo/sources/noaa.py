@@ -12,6 +12,7 @@ from thucia.core.geo.plugin_base import SourceBase
 @source_registry.register()
 class NOAA(SourceBase):
     ref = "noaa"
+    granularity = "M"
     name = "Oceanic Niño Index (ONI) - NOAA"
 
     ONI_URL = "https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt"

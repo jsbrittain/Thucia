@@ -35,6 +35,9 @@ class PipelineConfig:
             "worldpop.pop_count",
         ]
     )
+    # Interpolation method for coarser-granularity sources onto finer case grids
+    # ("linear" default; also "ffill"/"bfill").
+    covariate_interpolation: str = "linear"
 
     # Model fitting
     start_date: Optional[str | pd.Period] = None

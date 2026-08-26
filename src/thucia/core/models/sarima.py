@@ -6,6 +6,7 @@ from typing import Optional
 import pandas as pd
 from darts.models import ARIMA
 from darts.models import AutoARIMA
+from thucia.core.cases import period_freq_str
 from thucia.core.fs import DataFrame
 from thucia.core.models.utils import season_length_for_freq
 
@@ -164,7 +165,7 @@ def sarima(
 
     if season_length is None:
         if isinstance(df["Date"].dtype, pd.PeriodDtype):
-            season_length = season_length_for_freq(df["Date"].dtype.freq.freqstr)
+            season_length = season_length_for_freq(period_freq_str(df["Date"].dtype))
         else:
             season_length = 12
 

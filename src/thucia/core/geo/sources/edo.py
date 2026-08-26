@@ -24,6 +24,7 @@ max_workers = max(cpu_count - 1, 1)
 @source_registry.register()
 class EDO(SourceBase):
     ref = "edo"
+    granularity = "M"
     name = "European Drought Observatory (EDO)"
 
     cache_file = Path(cache_folder) / "climate" / "edo_stats.sqlite"

@@ -18,6 +18,11 @@ from thucia.core.quantiles import quantiles as default_quantiles
 from .wis import wis_bracher
 
 
+def period_freq_str(dtype: pd.PeriodDtype) -> str:
+    """Period-valid frequency string (e.g. 'M', not 'ME') from a Period dtype."""
+    return re.search(r"period\[(.+)\]", str(dtype.name)).group(1)
+
+
 def cases_per_month(*args, **kwargs) -> pd.DataFrame:
     return aggregate_cases(*args, **kwargs, freq="M")
 
@@ -375,7 +380,7 @@ def align_date_types(
     """
     if isinstance(source_dates, pd.Series):
         if isinstance(target_dates.dtype, pd.PeriodDtype):
-            freq = re.search(r"period\[(.+)\]", str(target_dates.dtype.name)).group(1)
+            freq = period_freq_str(target_dates.dtype)
             if isinstance(source_dates.dtype, pd.PeriodDtype):
                 # Source is already Period, just ensure same freq
                 source_dates = source_dates.dt.asfreq(freq)
@@ -386,7 +391,7 @@ def align_date_types(
             source_dates = pd.to_datetime(source_dates)
     elif isinstance(source_dates, pd.Timestamp):
         if isinstance(target_dates.dtype, pd.PeriodDtype):
-            freq = re.search(r"period\[(.+)\]", str(target_dates.dtype.name)).group(1)
+            freq = period_freq_str(target_dates.dtype)
             source_dates = source_dates.to_period(freq)
         else:
             source_dates = pd.to_datetime(source_dates)

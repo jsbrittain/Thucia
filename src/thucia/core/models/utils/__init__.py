@@ -1,10 +1,10 @@
 import logging
-import re
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
+from thucia.core.cases import period_freq_str
 
 from ..quantiles import quantiles  # canonical grid; re-exported for compatibility
 from .adapter import residual_regression as residual_regression
@@ -120,7 +120,7 @@ def sanitize_dates_inplace(
     """
     Ensure the date column is in datetime format and at month-end.
     """
-    freq = re.search(r"period\[(.+)\]", df["Date"].dtype.name).group(1)
+    freq = period_freq_str(df["Date"].dtype)
     if isinstance(start_date, str):
         start_date = pd.to_datetime(start_date)
     if isinstance(end_date, str):
@@ -215,7 +215,7 @@ def sanitise_covariates(df, covariate_cols, start_date, gid_col="GID_2"):
     if isinstance(start_date, str):
         start_date = pd.to_datetime(start_date)
     if isinstance(start_date, pd.Timestamp):
-        freq = re.search(r"period\[(.+)\]", df["Date"].dtype.name).group(1)
+        freq = period_freq_str(df["Date"].dtype)
         start_date = start_date.to_period(freq)
     if not start_date:
         start_date = df["Date"].max()

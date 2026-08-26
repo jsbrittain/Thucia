@@ -1,5 +1,4 @@
 import logging
-import re
 from pathlib import Path
 from typing import List
 from typing import Optional
@@ -9,6 +8,7 @@ import pandas as pd
 import torch
 from darts import TimeSeries
 from thucia.core.cases import align_date_types
+from thucia.core.cases import period_freq_str
 from thucia.core.fs import DataFrame
 from thucia.core.models.utils import quantiles as default_quantiles
 from thucia.core.models.utils import sample_to_quantiles_vec
@@ -16,11 +16,6 @@ from thucia.core.models.utils import sample_to_quantiles_vec
 torch.set_float32_matmul_precision(
     "medium"
 )  # medium=bfloat, high=tfloat, highest=float32
-
-
-def _period_freq(dtype: pd.PeriodDtype) -> str:
-    """Period-valid frequency string (e.g. 'M' not 'ME') from a Period dtype."""
-    return re.search(r"period\[(.+)\]", str(dtype.name)).group(1)
 
 
 class DartsBase:
@@ -158,7 +153,7 @@ class DartsBase:
         # darts needs a timestamp frequency; derive it from the Period dtype so
         # weekly/daily cadences keep their anchor (fallback: month-end).
         if isinstance(df[self.date_col].dtype, pd.PeriodDtype):
-            freq = _period_freq(df[self.date_col].dtype)
+            freq = period_freq_str(df[self.date_col].dtype)
             if freq == "M":
                 freq = "ME"  # darts' timestamp alias for month-end
         else:
@@ -291,7 +286,7 @@ class DartsBase:
         preds: pd.DataFrame,
     ) -> pd.DataFrame:
         # Ensure Date is in original format
-        freq = _period_freq(df["Date"].dtype)
+        freq = period_freq_str(df["Date"].dtype)
         if not isinstance(preds["Date"].dtype, pd.PeriodDtype):
             # Coerce to period
             preds["Date"] = preds["Date"].dt.to_period(freq)

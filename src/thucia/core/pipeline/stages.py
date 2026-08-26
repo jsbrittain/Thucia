@@ -79,7 +79,7 @@ def merge_covariates(
     """Merge each covariate source and add the incidence-rate column."""
     out = df.copy()
     for spec in config.source_specs:
-        merged = merge_sources(df, [spec])
+        merged = merge_sources(df, [spec], method=config.covariate_interpolation)
         new_cols = [c for c in merged.columns if c not in df.columns]
         out = out.merge(
             merged[["GID_2", "Date"] + new_cols],

@@ -17,6 +17,7 @@ from thucia.core.geo.stats import raster_stats_gid2
 @source_registry.register()
 class WorldClim(SourceBase):
     ref = "worldclim"
+    granularity = "M"
     name = "WorldClim"
 
     cache_file = Path(cache_folder) / "climate" / "worldclim_stats.sqlite"

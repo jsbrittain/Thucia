@@ -19,6 +19,9 @@ class SourceBase:
 
     ref: str | None = None
     name: str = "Base"
+    #: Native period granularity of the source's data ("M", "W", "D", "Y").
+    #: When merged onto a finer case grid the values are interpolated.
+    granularity: str = "M"
 
     def merge(
         self,

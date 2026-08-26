@@ -37,13 +37,27 @@ def _raw_cases(n_periods=40, seed=0, freq="M", start="2017-01-31", season=12):
 class FakeCovariateSource:
     name = "fake"
     ref = "fake"
+    granularity = "M"
 
     def merge(self, df, metrics=None, measures=None, use_cache=False):
+        # One covariate value per (GID_2, month), placed on the last period of
+        # each month; other rows are NaN so the geo layer interpolates onto
+        # finer (weekly/daily) grids.
         out = df.copy()
-        out["tmin"] = 20.0
-        out["tmax"] = 28.0
-        out["prec"] = 100.0
-        out["pop_count"] = 10000.0
+        end = pd.PeriodIndex(out["Date"]).to_timestamp(how="end")
+        month = end.to_period("M")
+        last_of_month = (
+            out.groupby(["GID_2", month], observed=False)["Date"].transform("max")
+            == out["Date"]
+        )
+        for metric, base in [
+            ("tmin", 20.0),
+            ("tmax", 28.0),
+            ("prec", 100.0),
+            ("pop_count", 10000.0),
+        ]:
+            out[metric] = np.nan
+            out.loc[last_of_month, metric] = base
         return out
 
 
@@ -168,7 +182,13 @@ def test_pipeline_end_to_end_weekly(tmp_path, monkeypatch, admin2_list):
     assert str(padded["Date"].dtype) == "period[W-SAT]"
     assert padded["future"].sum() == len(admin2_list) * cfg.future_periods
 
-    merged = merge_covariates(padded, cfg)
+    # The fake source is month-granular: on a weekly grid the geo layer must
+    # interpolate it onto every week and warn the user.
+    with pytest.warns(UserWarning, match="interpolated"):
+        merged = merge_covariates(padded, cfg)
+    for col in ["tmin", "tmax", "prec", "pop_count"]:
+        assert merged[col].notna().all()
+
     inputs, cov_cols = prepare_model_inputs(merged, cfg)
     assert inputs[cov_cols].isna().sum().sum() == 0
 
