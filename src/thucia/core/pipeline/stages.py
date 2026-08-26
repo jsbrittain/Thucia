@@ -57,7 +57,7 @@ def cases_per_period(
     last_date = tdf["Date"].max()
     future_dates = pd.period_range(
         start=last_date + 1,
-        periods=config.future_months,
+        periods=config.future_periods,
         freq=last_date.freq,
     )
     out = tdf.df
@@ -168,6 +168,8 @@ def fit_model(
         )
         if model != models.chronos:
             model_kwargs["num_samples"] = config.num_samples
+    elif model_name == "sarima":
+        model_kwargs["season_length"] = config.season_length
 
     return run_model(model_name, model, df, config.path, model_kwargs=model_kwargs)
 

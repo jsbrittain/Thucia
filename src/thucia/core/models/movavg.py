@@ -1,8 +1,22 @@
 import logging
+import re
 
 import numpy as np
 import pandas as pd
 from thucia.core.cases import align_date_types
+
+
+def _season_unit(dates: pd.Series, freq: str) -> pd.Series:
+    """Season unit for a pandas frequency: month, ISO week, or day-of-year.
+
+    `dates` is expected to be a datetime64 series (periods already converted to
+    timestamps).
+    """
+    if freq.startswith("W"):
+        return dates.dt.isocalendar()["week"].astype(int)
+    if freq.startswith("D"):
+        return dates.dt.dayofyear
+    return dates.dt.month
 
 
 def movavg(
@@ -35,11 +49,12 @@ def movavg(
     ).to_timestamp(how="end")
 
     # Interpolate date range, ensuring we don't skip any gaps in the data
-    freq = df["Date"].dtype.freq.name
+    freq = re.search(r"period\[(.+)\]", str(df["Date"].dtype.name)).group(1)
+    freq_ts = "ME" if freq == "M" else freq  # pandas timestamp alias for month-end
     date_range = pd.date_range(
         start=start_date - pd.DateOffset(years=5),  # need 5 years of history
         end=end_date,
-        freq=freq,
+        freq=freq_ts,
     )
 
     # Combine Cases over Status=Confirmed, Probable
@@ -60,25 +75,23 @@ def movavg(
 
     df_forecast = df.copy()
     df_forecast["Year"] = df_forecast["Date"].dt.year
-    df_forecast["Month"] = df_forecast["Date"].dt.month
+    df_forecast["Season"] = _season_unit(df_forecast["Date"], freq)
 
     df_forecast = df_forecast.groupby(
-        ["GID_2", "Year", "Month"], observed=True, as_index=False
-    ).agg({"Cases": "mean", "future": "first"})
+        ["GID_2", "Year", "Season"], observed=True, as_index=False
+    ).agg({"Cases": "mean", "future": "first", "Date": "first"})
 
     df_forecast["prediction"] = (
-        df_forecast.groupby(["GID_2", "Month"], observed=True)["Cases"]
+        df_forecast.groupby(["GID_2", "Season"], observed=True)["Cases"]
         .apply(lambda s: s.shift(1).rolling(window=5, min_periods=5).mean())
         .reset_index(level=[0, 1], drop=True)
     )
     df_forecast["sample"] = 0
 
-    df_forecast["Date"] = pd.to_datetime(
-        df_forecast[["Year", "Month"]].assign(DAY=1)
-    ).dt.to_period(freq[0])
-    df_forecast.drop(columns=["Year", "Month"], inplace=True)
+    df_forecast["Date"] = df_forecast["Date"].dt.to_period(freq)
+    df_forecast.drop(columns=["Year", "Season"], inplace=True)
 
-    df_forecast = df_forecast[df_forecast["Date"] >= start_date.to_period(freq[0])]
+    df_forecast = df_forecast[df_forecast["Date"] >= start_date.to_period(freq)]
     df_forecast.loc[df_forecast["future"], "Cases"] = np.nan
 
     logging.info("Seasonal Moving Average model complete.")

@@ -11,6 +11,22 @@ from .adapter import residual_regression as residual_regression
 from .residual_quantiles import add_residual_quantiles as add_residual_quantiles
 
 
+def season_length_for_freq(freq: str | None) -> int:
+    """Number of periods per seasonal cycle for a pandas frequency string.
+
+    Monthly -> 12, weekly (any anchor) -> 52, daily -> 365. Unknown or missing
+    frequencies default to monthly (12).
+    """
+    if not freq:
+        return 12
+    f = str(freq)
+    if f.startswith("W"):
+        return 52
+    if f.startswith("D"):
+        return 365
+    return 12
+
+
 def sample_to_quantiles_vec(samples, quantiles=quantiles):
     samples = np.asarray(samples)
     q_values = np.quantile(samples, quantiles)

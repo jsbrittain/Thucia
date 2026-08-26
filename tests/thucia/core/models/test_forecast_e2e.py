@@ -105,3 +105,27 @@ def test_forecast_valid_and_scoreable(label, model, extra, flags, df, tmp_path):
     assert np.isfinite(wis["WIS"]).all()
     r2val = r2(scored, "prediction", "Cases", group_col="GID_2")
     assert np.isfinite(r2val["R2"]).all()
+
+
+def test_forecast_weekly_baseline(tmp_path):
+    # Weekly (W-SAT) cadence end-to-end: the anchor must survive a real fit and
+    # the canonical quantile grid must be produced.
+    df = make_forecast_df(freq="W-SAT", n_periods=160, start="2017-01-07")
+    out = _run(
+        baseline,
+        df,
+        tmp_path,
+        horizon=1,
+        num_samples=20,
+        start_date=pd.Period("2020-01-04", freq="W-SAT"),
+    )
+    assert str(out["Date"].dtype) == str(df["Date"].dtype)  # period[W-SAT] kept
+    assert sorted(out["quantile"].unique()) == quantiles
+    valid = out["prediction"][out["prediction"].notna()]
+    assert (valid >= 0).all()
+    scored = out[out["prediction"].notna()]
+    wis = wis_bracher(
+        scored[["GID_2", "Date", "quantile", "prediction", "Cases"]],
+        group_cols=("GID_2", "Date"),
+    )
+    assert np.isfinite(wis["WIS"]).all()

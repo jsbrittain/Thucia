@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 from thucia.core.models import movavg
 
 
@@ -63,3 +64,45 @@ def test_movavg_multiple_gids():
         end_date=pd.Period("2020-12", freq="M"),
     )
     assert set(out["GID_2"].unique()) == {"A", "B"}
+
+
+def test_movavg_weekly_seasonal():
+    # Weekly cadence: predictions are the prior-years' same-ISO-week mean, and
+    # the weekly anchor (W-SAT) is preserved.
+    from forecast_data import make_forecast_df
+
+    df = make_forecast_df(freq="W-SAT", n_periods=364, start="2014-01-04", n_gid=1)
+    out = movavg(
+        df,
+        start_date=pd.Period("2020-01-04", freq="W-SAT"),
+        end_date=pd.Period("2020-12-26", freq="W-SAT"),
+    )
+    assert str(out["Date"].dtype) == "period[W-SAT]"
+    assert 50 <= len(out) <= 53  # ~one row per week in the window, single GID
+    preds = out["prediction"].dropna()
+    assert (preds >= 0).all()
+
+    # Pick a mid-year week with 5 prior years of history: the prediction is the
+    # mean of that ISO week's cases over the previous 5 years.
+    target = out[out["Date"] == pd.Period("2020-07-25", freq="W-SAT")]
+    assert len(target) == 1
+    gid = str(target["GID_2"].iloc[0])
+    week = int(
+        pd.PeriodIndex(target["Date"])
+        .to_timestamp(how="end")
+        .isocalendar()["week"]
+        .iloc[0]
+    )
+    week_arr = (
+        pd.PeriodIndex(df["Date"])
+        .to_timestamp(how="end")
+        .isocalendar()["week"]
+        .to_numpy()
+    )
+    hist = df[
+        (df["GID_2"].astype(str) == gid)
+        & (week_arr == week)
+        & (df["Date"] < pd.Period("2020-01-04", freq="W-SAT"))
+    ]
+    expected = hist["Cases"].iloc[-5:].mean()
+    assert target["prediction"].iloc[0] == pytest.approx(expected, rel=1e-6)

@@ -44,13 +44,13 @@ def test_cases_per_period_pads_and_adds_future(case_df, admin2_list, monkeypatch
     monkeypatch.setattr("thucia.core.geo.get_admin2_list", lambda iso3: admin2_list)
     cfg = PipelineConfig(path=".")
     out = cases_per_period(case_df, cfg, freq="M")
-    # every admin-2 present, plus `future_months` future rows per region
+    # every admin-2 present, plus `future_periods` future rows per region
     assert set(out["GID_2"].unique()) == set(admin2_list["GID_2"])
     n_dates = out["Date"].nunique()
-    assert n_dates == 6 + cfg.future_months
+    assert n_dates == 6 + cfg.future_periods
     future = out[out["future"]]
     assert future["Cases"].isna().all()
-    assert len(future) == len(admin2_list) * cfg.future_months
+    assert len(future) == len(admin2_list) * cfg.future_periods
     # historical case total preserved
     assert out[~out["future"]]["Cases"].sum() == case_df["Cases"].sum()
 
@@ -60,6 +60,20 @@ def test_cases_per_period_cutoff_date(case_df, admin2_list, monkeypatch):
     cfg = PipelineConfig(path=".", cutoff_date="2020-03")
     out = cases_per_period(case_df, cfg, freq="M")
     assert (out[~out["future"]]["Date"] <= pd.Period("2020-03", "M")).all()
+
+
+@pytest.mark.parametrize(
+    "freq,expected_period", [("W-SAT", "period[W-SAT]"), ("D", "period[D]")]
+)
+def test_cases_per_period_cadence(
+    case_df, admin2_list, monkeypatch, freq, expected_period
+):
+    monkeypatch.setattr("thucia.core.geo.get_admin2_list", lambda iso3: admin2_list)
+    cfg = PipelineConfig(path=".")
+    out = cases_per_period(case_df, cfg, freq=freq)
+    assert str(out["Date"].dtype) == expected_period
+    assert out["future"].sum() == len(admin2_list) * cfg.future_periods
+    assert out[~out["future"]]["Cases"].sum() == pytest.approx(case_df["Cases"].sum())
 
 
 def test_merge_covariates(case_df, monkeypatch):

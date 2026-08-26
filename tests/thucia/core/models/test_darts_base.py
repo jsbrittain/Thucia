@@ -36,16 +36,17 @@ class MockDarts(DartsBase):
         ]
         idx = pd.DatetimeIndex(selected)
         base = float(np.asarray(ts.values()).reshape(-1)[-1])
+        freq = getattr(ts.freq, "freqstr", ts.freq)
         if self.output == "quantiles":
             df = pd.DataFrame(
                 {f"Log_Cases_q{q:0.3f}": base + q for q in [0.025, 0.5, 0.975]},
                 index=idx,
             )
-            return TimeSeries.from_dataframe(df, fill_missing_dates=True, freq="ME")
+            return TimeSeries.from_dataframe(df, fill_missing_dates=True, freq=freq)
         rng = np.random.default_rng(0)
         arr = base + rng.normal(0, 1, (len(idx), 1, 100))
         return TimeSeries.from_times_and_values(
-            idx, arr, fill_missing_dates=True, freq="ME"
+            idx, arr, fill_missing_dates=True, freq=freq
         )
 
 
@@ -197,4 +198,32 @@ def test_multivariate_path(df):
         )
     )
     assert len(out) > 0
+    assert np.isfinite(out["prediction"]).all()
+
+
+@pytest.mark.parametrize(
+    "freq,start,forecast_from",
+    [
+        ("W-SAT", "2017-01-07", pd.Period("2020-01-04", freq="W-SAT")),
+        ("W-SUN", "2017-01-01", pd.Period("2020-01-05", freq="W-SUN")),
+        ("D", "2017-01-01", pd.Period("2020-01-01", freq="D")),
+    ],
+)
+def test_cadence_anchor_preserved(freq, start, forecast_from):
+    # The DartsBase machinery must keep the Period anchor (W-SAT stays W-SAT,
+    # daily stays daily) end-to-end -- this guards the old freqstr[0] truncation.
+    n = 1100 if freq == "D" else 160
+    df = make_forecast_df(freq=freq, n_periods=n, start=start)
+    m = MockDarts(
+        df=df,
+        case_col="Log_Cases",
+        geo_col="GID_2",
+        horizons=[1],
+        covariate_cols=["tmin", "prec"],
+    )
+    out = _as_df(
+        m.historical_predictions(start_date=forecast_from, model_admin_level=2)
+    )
+    assert str(out["Date"].dtype) == str(df["Date"].dtype)
+    assert sorted(out["quantile"].unique()) == pytest.approx([0.025, 0.5, 0.975])
     assert np.isfinite(out["prediction"]).all()

@@ -8,8 +8,20 @@ from thucia.core.models.utils import quantiles
 from thucia.core.models.utils import sample_to_quantiles_vec
 from thucia.core.models.utils import samples_to_quantiles
 from thucia.core.models.utils import sanitise_covariates
+from thucia.core.models.utils import season_length_for_freq
 from thucia.core.models.utils import set_historical_na_to_zero
 from thucia.core.models.utils import validate_unique_keys
+
+
+def test_season_length_for_freq():
+    assert season_length_for_freq("M") == 12
+    assert season_length_for_freq("ME") == 12
+    assert season_length_for_freq("W-SAT") == 52
+    assert season_length_for_freq("W-SUN") == 52
+    assert season_length_for_freq("W-MON") == 52
+    assert season_length_for_freq("D") == 365
+    assert season_length_for_freq(None) == 12
+    assert season_length_for_freq("Q") == 12  # unknown -> monthly default
 
 
 def _monthly_df(n=6, n_gid=2, seed=0):

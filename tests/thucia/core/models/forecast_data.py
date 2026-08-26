@@ -1,44 +1,57 @@
-# Synthetic monthly case data for forecast tests.
+# Synthetic seasonal case data for forecast tests.
 #
 # The generator produces seasonal + trend + noise case counts for a small
 # number of GIDs with NaN-free covariates and a categorical geo column.
-# History is long enough (>= 48 months before any forecast origin) for
+# History is long enough (>= 48 periods before any forecast origin) for
 # lags-based models such as xgboost (input_chunk_length=48).
 from __future__ import annotations
+
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 
-SEASON_LENGTH = 12
-MIN_HISTORY_MONTHS = 60  # >= input_chunk_length (48) plus slack
+def season_length_for_freq(freq: str) -> int:
+    """Number of periods per seasonal cycle (monthly 12, weekly 52, daily 365)."""
+    if freq.startswith("W"):
+        return 52
+    if freq.startswith("D"):
+        return 365
+    return 12
 
 
 def make_forecast_df(
-    n_months: int = 60,
+    n_periods: int = 60,
     n_gid: int = 2,
     start: str = "2016-01",
     seed: int = 0,
     with_covariates: bool = True,
     gid_prefix: str = "X",
+    freq: str = "M",
+    season_length: Optional[int] = None,
 ) -> pd.DataFrame:
-    """Return a monthly case DataFrame with the columns models expect.
+    """Return a synthetic case DataFrame with the columns models expect.
 
-    Columns: Date (period[M]), GID_1, GID_2 (categorical), future, Cases,
+    Columns: Date (period[<freq>]), GID_1, GID_2 (categorical), future, Cases,
     Log_Cases, and covariates (tmin, prec) that are NaN-free.
 
-    Fits are kept fast by forecasting only a short trailing window (last ~6
-    months; >= max horizon for multi-horizon tests) against a modest history.
+    `freq` may be any pandas Period frequency ("M", "W-SAT", "W-SUN", "D", ...).
+    Fits are kept fast by forecasting only a short trailing window against a
+    modest history.
     """
     rng = np.random.default_rng(seed)
-    idx = pd.period_range(start, periods=n_months, freq="M")
+    idx = pd.period_range(start, periods=n_periods, freq=freq)
+    season = (
+        season_length if season_length is not None else season_length_for_freq(freq)
+    )
     bases = np.linspace(20.0, 60.0, n_gid)
     rows = []
     for gi, base in enumerate(bases):
         gid_1 = f"{gid_prefix}.{gi + 1}_1"
         gid_2 = f"{gid_prefix}.{gi + 1}.1_2"
         for i, d in enumerate(idx):
-            seasonal = 1 + 0.5 * np.sin(2 * np.pi * i / SEASON_LENGTH)
+            seasonal = 1 + 0.5 * np.sin(2 * np.pi * i / season)
             trend = 1 + 0.005 * i
             cases = base * seasonal * trend + rng.uniform(-2, 2)
             rows.append(

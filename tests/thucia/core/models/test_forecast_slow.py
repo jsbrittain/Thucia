@@ -6,6 +6,7 @@ import pytest
 from forecast_data import COVARIATE_COLS
 from forecast_data import make_forecast_df
 from thucia.core.models import nbeats
+from thucia.core.models import sarima
 from thucia.core.models import xgboost
 from thucia.core.quantiles import quantiles
 
@@ -47,7 +48,7 @@ def test_nbeats_forecast(df):
 def test_xgboost_multihorizon():
     # output_chunk_length=12 (max horizon) needs >= 48 lags + 12 months of
     # training history, hence the longer fixture.
-    df = make_forecast_df(n_months=96, start="2014-01")
+    df = make_forecast_df(n_periods=96, start="2014-01")
     out = _as_df(
         xgboost(
             df,
@@ -89,4 +90,28 @@ def test_timesfm_forecast_requires_torch_and_network(df):
             db_file=None,
         )
     )
+    assert np.isfinite(out["prediction"]).all()
+
+
+def test_sarima_weekly_seasonal():
+    # SARIMA on a weekly cadence with an explicit 52-period seasonal length;
+    # the weekly anchor must be preserved.
+    df = make_forecast_df(freq="W-SAT", n_periods=208, start="2016-01-02", n_gid=1)
+    out = _as_df(
+        sarima(
+            df,
+            start_date=pd.Period("2019-12-07", freq="W-SAT"),
+            gid_1=None,
+            horizons=[1],
+            case_col="Log_Cases",
+            covariate_cols=COVARIATE_COLS,
+            retrain=False,
+            db_file=None,
+            model_admin_level=2,
+            num_samples=20,
+            season_length=52,
+        )
+    )
+    assert str(out["Date"].dtype) == "period[W-SAT]"
+    assert sorted(out["quantile"].unique()) == quantiles
     assert np.isfinite(out["prediction"]).all()

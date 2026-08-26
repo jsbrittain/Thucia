@@ -24,7 +24,7 @@ class PipelineConfig:
 
     # Case aggregation
     cutoff_date: Optional[str | pd.Timestamp | pd.Period] = None
-    future_months: int = 12
+    future_periods: int = 12  # number of future rows per region (of the data's freq)
 
     # Covariate merging
     source_specs: list[str] = field(
@@ -46,6 +46,9 @@ class PipelineConfig:
     num_samples: int = 200
     retrain: bool = False
     multivariate: bool = False
+    # SARIMA seasonal period; None auto-detects from the data frequency
+    # (monthly -> 12, weekly -> 52, daily -> 365).
+    season_length: Optional[int] = None
 
     # Model-input preparation: optional lag/roll feature recipe for
     # `build_features` (see thucia.core.models.utils.covariates). When None,
