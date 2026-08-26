@@ -26,6 +26,7 @@ from thucia.core.geo import add_incidence_rate
 from thucia.core.geo import lookup_gid1
 from thucia.core.geo import merge_sources
 from thucia.core.geo import pad_admin2
+from thucia.core.models import get_model
 from thucia.core.models import run_model
 from thucia.core.models.ensemble import create_ensemble
 from thucia.core.models.utils import sanitise_covariates
@@ -133,10 +134,7 @@ def fit_model(
     db_file: str | Path | None = None,
 ) -> Any:
     """Fit a named model on prepared inputs and return the quantile frame."""
-    try:
-        model = getattr(models, model_name)
-    except AttributeError:
-        raise ValueError(f"Model '{model_name}' not found in thucia.core.models")
+    model = get_model(model_name)
 
     base_cols = set(BASE_COLUMNS) | {config.case_col}
     covariate_cols = [c for c in df.columns if c not in base_cols]

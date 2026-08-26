@@ -78,6 +78,18 @@ class _ModelNamespace(types.ModuleType):
 sys.modules[__name__].__class__ = _ModelNamespace
 
 
+def list_models() -> list[str]:
+    """Return the names of all advertised forecast models."""
+    return list(__all__)
+
+
+def get_model(name: str):
+    """Resolve a model callable by name (raises ValueError if unknown)."""
+    if name not in _exports:
+        raise ValueError(f"Unknown model '{name}'. Available models: {list_models()}")
+    return __getattr__(name)
+
+
 def run_model(
     name: str,
     model,

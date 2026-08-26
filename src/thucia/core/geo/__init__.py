@@ -10,9 +10,8 @@ from rapidfuzz import process
 from thucia.core.fs import cache_folder
 from thucia.core.fs import DataFrame
 
+from .plugin_base import source_registry
 from .plugin_loader import load_plugins
-
-plugins = None
 
 
 def lookup_gid1(iso3, admin1_names: list[str] | None = None):
@@ -272,17 +271,23 @@ def align_admin2_regions(
     return df
 
 
-def refresh_plugins(verbose: bool = False) -> None:
+def refresh_plugins(verbose: bool = False) -> dict[str, type]:
+    """Import source modules so plugins self-register.
+
+    Returns the ``{ref: class}`` registry mapping.
     """
-    Reloads the plugins to ensure the latest versions are used.
-    """
-    global plugins
     plugins = load_plugins()
     if verbose:
         print("Source plugins loaded:")
-        for ref, plugin in plugins.items():
-            print(f" - [{ref}] {plugin.name}")
-    logging.info("Plugins loaded: " + ", ".join([plugin for plugin in plugins]))
+        for ref in source_registry.names():
+            print(f" - [{ref}] {source_registry.get(ref).name}")
+    logging.info("Plugins loaded: " + ", ".join(source_registry.names()))
+    return plugins
+
+
+def _ensure_plugins_loaded() -> None:
+    if not source_registry.names():
+        load_plugins()
 
 
 def merge_geo_sources(df: pd.DataFrame, sources: list[str]) -> pd.DataFrame:
@@ -291,32 +296,25 @@ def merge_geo_sources(df: pd.DataFrame, sources: list[str]) -> pd.DataFrame:
 
     Parameters:
     df (pd.DataFrame): The DataFrame to which source information will be added.
-    source (list[str]): List of sources to be added. Format: ['origin.field']
-                        where project is optional, e.g. ['worldclim.*', 'edo.spi-7']
+    sources (list[str]): List of sources to be added. Format: ['origin.field']
+                         where field may be '*', e.g. ['worldclim.*', 'edo.spi6'].
     """
-    global plugins
-    if not plugins:
-        refresh_plugins()
+    _ensure_plugins_loaded()
 
     # Collate source information
-    d_sources = {}
+    d_sources: dict[str, list[str]] = {}
     for source in sources:
         if "." not in source:
             raise ValueError(
                 "Source format must be 'origin.field', "
                 "e.g. 'worldclim.*' or 'edo.spi6'."
             )
-        origin, field = source.split(".")
-        if origin not in d_sources:
-            d_sources[origin] = []
-        d_sources[origin].append(field)
+        origin, field = source.split(".", 1)
+        d_sources.setdefault(origin, []).append(field)
 
-    for source, fields in d_sources.items():
-        try:
-            source_module = plugins.get(source)
-        except KeyError:
-            logging.error(f"Source plugin '{source}' not found.")
-        df = source_module.merge(df, metrics=fields)
+    for origin, fields in d_sources.items():
+        plugin = source_registry.get(origin)()
+        df = plugin.merge(df, metrics=fields)
 
     return df
 

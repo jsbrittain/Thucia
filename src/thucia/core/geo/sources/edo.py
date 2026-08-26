@@ -11,6 +11,7 @@ import requests
 from thucia.core.cache import Cache
 from thucia.core.cases import align_date_types
 from thucia.core.fs import cache_folder
+from thucia.core.geo.plugin_base import source_registry
 from thucia.core.geo.plugin_base import SourceBase
 from thucia.core.geo.stats import raster_stats_gid2
 from tqdm import tqdm
@@ -20,6 +21,7 @@ cpu_count = os.cpu_count() or 1  # can return zero in some environments
 max_workers = max(cpu_count - 1, 1)
 
 
+@source_registry.register()
 class EDO(SourceBase):
     ref = "edo"
     name = "European Drought Observatory (EDO)"

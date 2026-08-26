@@ -63,6 +63,8 @@ def test_cases_per_period_cutoff_date(case_df, admin2_list, monkeypatch):
 
 
 def test_merge_covariates(case_df, monkeypatch):
+    from thucia.core.registry import Registry
+
     class FakePlugin:
         name = "fake"
         ref = "fake"
@@ -72,7 +74,9 @@ def test_merge_covariates(case_df, monkeypatch):
             out["fake_col"] = 42.0
             return out
 
-    monkeypatch.setattr("thucia.core.geo.plugins", {"fake": FakePlugin()})
+    fake_registry = Registry("covariate source")
+    fake_registry.register()(FakePlugin)
+    monkeypatch.setattr("thucia.core.geo.source_registry", fake_registry)
     cfg = PipelineConfig(path=".", source_specs=["fake.metric"])
     df = case_df.copy()
     df["pop_count"] = 1000.0
@@ -170,7 +174,7 @@ def test_fit_model_baseline(tmp_path):
 
 
 def test_fit_model_unknown_raises(tmp_path):
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ValueError, match="Unknown model"):
         fit_model(pd.DataFrame(), "not_a_model", PipelineConfig(path=tmp_path))
 
 

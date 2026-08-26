@@ -69,7 +69,9 @@ def test_get_records_batched_missing_keys_omitted(cache_file):
 
 
 def test_cache_registry_unknown_type(cache_file):
-    with pytest.raises(ValueError):
+    from thucia.core.registry import PluginNotFoundError
+
+    with pytest.raises(PluginNotFoundError):
         Cache(
             "not-a-cache",
             cache_file=cache_file,

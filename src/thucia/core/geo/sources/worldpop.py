@@ -6,10 +6,12 @@ import pandas as pd
 import requests
 from thucia.core.cases import align_date_types
 from thucia.core.fs import cache_folder
+from thucia.core.geo.plugin_base import source_registry
 from thucia.core.geo.plugin_base import SourceBase
 from thucia.core.geo.stats import raster_stats_gid2
 
 
+@source_registry.register()
 class WorldPop(SourceBase):
     ref = "worldpop"
     name = "WorldPop"
@@ -86,6 +88,7 @@ class WorldPop(SourceBase):
         df: pd.DataFrame,
         metrics: list[str] | None = None,
         measures: list[str] | None = None,
+        use_cache: bool = False,
     ) -> pd.DataFrame:
         logging.info("Merging population data with case data...")
 

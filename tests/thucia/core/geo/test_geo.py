@@ -97,6 +97,7 @@ def test_align_admin2_regions_fuzzy_match(admin2_list):
 
 def test_merge_sources_calls_plugin(admin2_list):
     from thucia.core.geo import merge_sources
+    from thucia.core.registry import Registry
 
     class FakePlugin:
         name = "fake"
@@ -107,7 +108,9 @@ def test_merge_sources_calls_plugin(admin2_list):
             df["fake_col"] = 42.0
             return df
 
-    with patch("thucia.core.geo.plugins", {"fake": FakePlugin()}):
+    fake_registry = Registry("covariate source")
+    fake_registry.register()(FakePlugin)
+    with patch("thucia.core.geo.source_registry", fake_registry):
         df = pd.DataFrame(
             {
                 "Date": pd.period_range("2020-01", periods=2, freq="M"),

@@ -5,9 +5,11 @@ import pandas as pd
 import requests
 from pandas.tseries.offsets import MonthEnd
 from thucia.core.cases import align_date_types
+from thucia.core.geo.plugin_base import source_registry
 from thucia.core.geo.plugin_base import SourceBase
 
 
+@source_registry.register()
 class NOAA(SourceBase):
     ref = "noaa"
     name = "Oceanic Niño Index (ONI) - NOAA"
@@ -58,6 +60,7 @@ class NOAA(SourceBase):
         df: pd.DataFrame,
         metrics: list[str] | None = None,
         measures: list[str] | None = None,
+        use_cache: bool = False,
     ) -> pd.DataFrame:
         logging.info("Merging ONI data with case data by Date...")
 

@@ -44,6 +44,19 @@ def test_all_modules_import_cleanly():
         importlib.import_module(f"thucia.core.models.{name}")
 
 
+def test_list_models_matches_all():
+    assert models.list_models() == models.__all__
+
+
+def test_get_model_resolves_callable():
+    assert callable(models.get_model("baseline"))
+
+
+def test_get_model_unknown_raises():
+    with pytest.raises(ValueError, match="not_a_model"):
+        models.get_model("not_a_model")
+
+
 # Keyword set passed by pipeline/analysis_core.py to run_model() for every model.
 COMMON_KWARGS = {
     "start_date": "2020-01",
