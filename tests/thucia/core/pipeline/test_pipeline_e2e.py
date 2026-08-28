@@ -4,8 +4,11 @@
 import numpy as np
 import pandas as pd
 import pytest
+from thucia.core.cases import prepare_pdfm_embeddings
 from thucia.core.cases import read_db
 from thucia.core.cases import write_db
+from thucia.core.fs import write_nc
+from thucia.core.pipeline import apply_residual_regression
 from thucia.core.pipeline import cases_per_period
 from thucia.core.pipeline import fit_model
 from thucia.core.pipeline import merge_covariates
@@ -202,3 +205,139 @@ def test_pipeline_end_to_end_weekly(tmp_path, monkeypatch, admin2_list):
     scored = score_model(frame, cfg)
     observed = scored["Cases"].notna()
     assert np.isfinite(scored.loc[observed, "WIS"]).any()
+
+
+def _pdfm_embeddings(gid_2s, seed=0, n_feature=10):
+    # Seeded-random PDFM-style embeddings shaped like the real user-supplied
+    # file (GID_2 + feature0..featureN). No external data required.
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame(
+        {
+            "GID_2": gid_2s,
+            **{f"feature{d}": rng.normal(size=len(gid_2s)) for d in range(n_feature)},
+        }
+    )
+
+
+def test_pipeline_end_to_end_with_pdfm_residual_regression(
+    tmp_path, monkeypatch, admin2_list
+):
+    # Full chain through a baseline fit, then correct the forecasts with the
+    # user-supplied PDFM embeddings path (seeded-random, no real data needed).
+    from thucia.core.registry import Registry
+
+    fake_registry = Registry("covariate source")
+    fake_registry.register()(FakeCovariateSource)
+    monkeypatch.setattr("thucia.core.geo.source_registry", fake_registry)
+    monkeypatch.setattr("thucia.core.geo.get_admin2_list", lambda iso3: admin2_list)
+
+    raw = _raw_cases()
+    cfg = PipelineConfig(
+        path=tmp_path,
+        start_date=pd.Period("2019-01", freq="M"),
+        train_end_date=pd.Period("2018-12", freq="M"),
+        horizons=[1],
+        num_samples=50,
+        source_specs=["fake.metric"],
+        lag_spec=[
+            {
+                "name": "log_cases_lag_1",
+                "groupby": ["GID_2"],
+                "column": "Log_Cases",
+                "pipeline": [{"op": "shift", "periods": 1}],
+            }
+        ],
+    )
+
+    padded = cases_per_period(raw, cfg, freq="M")
+    merged = merge_covariates(padded, cfg)
+    inputs, cov_cols = prepare_model_inputs(merged, cfg)
+    frame = fit_model(inputs, "baseline", cfg, db_file=None)
+    frame = frame.df if hasattr(frame, "df") else frame
+    assert sorted(frame["quantile"].unique()) == quantiles
+    assert set(frame["GID_2"].unique()) == set(admin2_list["GID_2"])
+
+    # Build a seeded-random embeddings file covering all admin-2 GIDs.
+    embed_df = _pdfm_embeddings(admin2_list["GID_2"].tolist())
+    nc = tmp_path / "embeddings.nc"
+    write_nc(embed_df, str(nc))
+    embeddings = prepare_pdfm_embeddings(str(nc))
+    assert set(embeddings["GID_2"]) == set(admin2_list["GID_2"])
+
+    out = apply_residual_regression(
+        frame,
+        embeddings,
+        cfg,
+        method="ridge",
+        geo_col="GID_2",
+    )
+    # Same structure and canonical quantile grid, all GIDs retained, and the
+    # correction actually moved the forecasts for some GID. (The baseline
+    # warm-up rows with no history stay NaN, so we compare only non-NaN rows.)
+    assert set(out["GID_2"]) == set(admin2_list["GID_2"])
+    assert sorted(out["quantile"].unique()) == quantiles
+    shared = out["prediction"].notna() & frame["prediction"].notna()
+    # The log-space ridge correction can dip a near-zero prediction slightly
+    # below 0; the meaningful property is that fitted rows stay finite and the
+    # correction actually moved the forecasts.
+    assert np.isfinite(out.loc[shared, "prediction"]).all()
+    corrected = out[shared].set_index(["Date", "GID_2", "quantile"])["prediction"]
+    orig = frame[shared].set_index(["Date", "GID_2", "quantile"])["prediction"]
+    diff = (corrected - orig).abs()
+    assert diff.max() > 0
+
+
+def test_pipeline_end_to_end_pdfm_subsamples_missing_embeddings(
+    tmp_path, monkeypatch, admin2_list
+):
+    # Embeddings cover only a subset of the admin-2 regions: the residual
+    # regression warns and continues on the provinces that have embeddings
+    # (mirrors the old analysis_core.py subsampling), dropping the rest.
+    from thucia.core.registry import Registry
+
+    fake_registry = Registry("covariate source")
+    fake_registry.register()(FakeCovariateSource)
+    monkeypatch.setattr("thucia.core.geo.source_registry", fake_registry)
+    monkeypatch.setattr("thucia.core.geo.get_admin2_list", lambda iso3: admin2_list)
+
+    raw = _raw_cases()
+    cfg = PipelineConfig(
+        path=tmp_path,
+        start_date=pd.Period("2019-01", freq="M"),
+        train_end_date=pd.Period("2018-12", freq="M"),
+        horizons=[1],
+        num_samples=50,
+        source_specs=["fake.metric"],
+        lag_spec=[
+            {
+                "name": "log_cases_lag_1",
+                "groupby": ["GID_2"],
+                "column": "Log_Cases",
+                "pipeline": [{"op": "shift", "periods": 1}],
+            }
+        ],
+    )
+
+    padded = cases_per_period(raw, cfg, freq="M")
+    merged = merge_covariates(padded, cfg)
+    inputs, cov_cols = prepare_model_inputs(merged, cfg)
+    frame = fit_model(inputs, "baseline", cfg, db_file=None)
+    frame = frame.df if hasattr(frame, "df") else frame
+
+    # Embeddings for only the first two admin-2 regions.
+    covered = admin2_list["GID_2"].iloc[:2].tolist()
+    embed_df = _pdfm_embeddings(covered)
+    nc = tmp_path / "embeddings.nc"
+    write_nc(embed_df, str(nc))
+    embeddings = prepare_pdfm_embeddings(str(nc))
+
+    with pytest.warns(UserWarning, match="embeddings"):
+        out = apply_residual_regression(
+            frame,
+            embeddings,
+            cfg,
+            method="ridge",
+            geo_col="GID_2",
+        )
+    assert set(out["GID_2"]) == set(covered)
+    assert len(out) < len(frame)
