@@ -151,25 +151,21 @@ def fit_model(
         "model_admin_level": config.model_admin_level,
         "db_file": db_file,
     }
-    if model in [
-        models.tcn,
-        models.tft,
-        models.nbeats,
-        models.nhits,
-        models.xgboost,
-        models.chronos,
-    ]:
-        model_kwargs.update(
-            {
-                "train_end_date": config.train_end_date,
-                "retrain": config.retrain,
-                "multivariate": config.multivariate,
-            }
-        )
-        if model != models.chronos:
-            model_kwargs["num_samples"] = config.num_samples
-    elif model_name == "sarima":
-        model_kwargs["season_length"] = config.season_length
+    # Each model declares, via its ModelSpec, which extra config knobs it
+    # accepts (beyond the common ones above). Map supported knobs to their
+    # PipelineConfig values instead of special-casing model names.
+    spec = models.get_model_spec(model_name)
+    knob_value = {
+        "train_end_date": config.train_end_date,
+        "retrain": config.retrain,
+        "multivariate": config.multivariate,
+        "samples": config.num_samples,
+        "season_length": config.season_length,
+    }
+    kwarg_name = {"samples": "num_samples"}  # others are identical to knob names
+    for knob, value in knob_value.items():
+        if knob in spec.supports:
+            model_kwargs[kwarg_name.get(knob, knob)] = value
 
     return run_model(model_name, model, df, config.path, model_kwargs=model_kwargs)
 

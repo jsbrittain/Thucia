@@ -5,6 +5,10 @@ import pandas as pd
 from thucia.core.cases import align_date_types
 from thucia.core.cases import period_freq_str
 
+from ._meta import ModelSpec
+
+SPEC = ModelSpec(name="movavg", family="statistical", fast=True)
+
 
 def _season_unit(dates: pd.Series, freq: str) -> pd.Series:
     """Season unit for a pandas frequency: month, ISO week, or day-of-year.

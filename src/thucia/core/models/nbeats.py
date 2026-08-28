@@ -8,7 +8,16 @@ from darts.models import NBEATSModel
 from darts.utils.likelihood_models import QuantileRegression
 from thucia.core.fs import DataFrame
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="nbeats",
+    family="darts",
+    supports=frozenset({"train_end_date", "retrain", "multivariate", "samples"}),
+    sampling="quantiles",
+    extras=("torch",),
+)
 
 
 class NBEATSSamples(DartsBase):

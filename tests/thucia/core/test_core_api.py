@@ -86,13 +86,25 @@ def test_all_resolves_to_expected_objects():
     assert resolved["run_backtest"] is run_backtest
     assert resolved["Registry"] is Registry
     assert resolved["models"] is __import__("thucia.core.models", fromlist=["x"])
+    assert (
+        resolved["get_model"]
+        is __import__("thucia.core.models", fromlist=["get_model"]).get_model
+    )
+    assert (
+        resolved["get_model_spec"]
+        is __import__("thucia.core.models", fromlist=["get_model_spec"]).get_model_spec
+    )
+    assert (
+        resolved["ModelSpec"]
+        is __import__("thucia.core.models._meta", fromlist=["ModelSpec"]).ModelSpec
+    )
 
     import types
 
     for name, obj in resolved.items():
-        assert isinstance(obj, (types.ModuleType, type, types.FunctionType)) or callable(
-            obj
-        ), f"{name!r} resolved to {obj!r}"
+        assert isinstance(
+            obj, (types.ModuleType, type, types.FunctionType)
+        ) or callable(obj), f"{name!r} resolved to {obj!r}"
 
 
 def test_unknown_attribute_raises():

@@ -8,7 +8,15 @@ from darts.models import TiDEModel
 from darts.utils.likelihood_models import GaussianLikelihood
 from thucia.core.fs import DataFrame
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="tide",
+    family="darts",
+    sampling="samples",
+    extras=("torch",),
+)
 
 
 # -------- TiDE --------

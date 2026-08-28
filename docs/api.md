@@ -32,7 +32,10 @@ a thin, data-in/data-out function configured by
 ```{eval-rst}
 .. autofunction:: thucia.core.models.list_models
 .. autofunction:: thucia.core.models.get_model
+.. autofunction:: thucia.core.models.get_model_spec
 .. autofunction:: thucia.core.models.run_model
+.. autoclass:: thucia.core.models._meta.ModelSpec
+   :members:
 ```
 
 ## Data layer

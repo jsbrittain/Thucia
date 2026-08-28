@@ -10,7 +10,15 @@ from thucia.core.cases import period_freq_str
 from thucia.core.fs import DataFrame
 from thucia.core.models.utils import season_length_for_freq
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="sarima",
+    family="statistical",
+    supports=frozenset({"season_length"}),
+    sampling="samples",
+)
 
 
 # -------- SARIMA --------

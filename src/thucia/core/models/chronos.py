@@ -9,7 +9,16 @@ from darts.models import Chronos2Model
 from darts.utils.likelihood_models import QuantileRegression
 from thucia.core.fs import DataFrame
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="chronos",
+    family="darts",
+    supports=frozenset({"train_end_date", "retrain", "multivariate"}),
+    sampling="quantiles",
+    extras=("chronos",),
+)
 
 try:  # Native chronos package (alternative available through Darts)
     from chronos import Chronos2Pipeline

@@ -8,7 +8,16 @@ from darts.models import TFTModel
 from darts.utils.likelihood_models import GaussianLikelihood
 from thucia.core.fs import DataFrame
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="tft",
+    family="darts",
+    supports=frozenset({"train_end_date", "retrain", "multivariate", "samples"}),
+    sampling="samples",
+    extras=("torch",),
+)
 
 
 # -------- TFT --------

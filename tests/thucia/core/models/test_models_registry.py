@@ -58,7 +58,8 @@ def test_get_model_unknown_raises():
 
 
 # Keyword set passed by thucia.core.pipeline.fit_model / run_backtest to
-# run_model() for every model.
+# run_model() for every model (the common kwargs + knobs declared in each
+# model's ModelSpec.supports).
 COMMON_KWARGS = {
     "start_date": "2020-01",
     "gid_1": None,
@@ -68,48 +69,65 @@ COMMON_KWARGS = {
     "model_admin_level": 2,
     "db_file": None,
 }
-# Extra kwargs added for the darts-based models.
-DARTS_KWARGS = {
+#: Canonical knob name -> the kwarg `fit_model` passes to the model callable.
+KNOW_TO_KWARG = {
+    "train_end_date": "train_end_date",
+    "retrain": "retrain",
+    "multivariate": "multivariate",
+    "samples": "num_samples",
+    "season_length": "season_length",
+}
+KNOB_VALUES = {
     "train_end_date": "2022-01",
     "retrain": False,
     "multivariate": False,
-    "num_samples": 200,
+    "samples": 200,
+    "season_length": 12,
 }
-DARTS_MODELS = {"tcn", "tft", "nbeats", "nhits", "xgboost"}
-# Models with *args/**kwargs swallow anything; inla is container-based with its own
-# interface, so exclude it from the shared forecasting contract.
-LOOSE_MODELS = {"baseline", "sarima", "movavg", "timesfm"}
 
 
-def _model_set():
-    return set(models.__all__) - LOOSE_MODELS - {"inla"}
+def test_each_advertised_model_resolves_a_spec():
+    # Adding a model with new knobs should be a one-line SPEC, not an edit to
+    # the pipeline; every advertised model must expose a valid ModelSpec.
+    for name in models.__all__:
+        spec = models.get_model_spec(name)
+        assert spec.name == name
+        assert callable(getattr(models, name)), f"{name} is not callable"
 
 
-def test_all_models_bind_common_kwargs():
-    for name in _model_set():
+def test_spec_supports_are_known_and_bindable():
+    # Whatever a spec declares must (a) be a known knob and (b) bind on the
+    # model callable's signature together with the common kwargs -- this is the
+    # guarantee that fit_model's spec-driven dispatch stays valid. The
+    # container-based `inla` model has its own ``inla(df, gid_1)`` interface and
+    # is not part of the shared forecasting contract.
+    from thucia.core.models._meta import SUPPORTED_KWARGS
+
+    for name in models.__all__:
+        if name == "inla":
+            continue
+        spec = models.get_model_spec(name)
+        assert spec.supports <= SUPPORTED_KWARGS, f"{name}: unknown supports"
         sig = inspect.signature(getattr(models, name))
-        sig.bind_partial(**COMMON_KWARGS)  # raises TypeError on unknown kwargs
+        kw = dict(COMMON_KWARGS)
+        for knob in spec.supports:
+            kw[KNOW_TO_KWARG[knob]] = KNOB_VALUES[knob]
+        sig.bind_partial(**kw)  # raises TypeError on unknown kwargs
 
 
-def test_darts_models_bind_full_pipeline_kwargs():
-    for name in DARTS_MODELS:
-        sig = inspect.signature(getattr(models, name))
-        kw = {**COMMON_KWARGS, **DARTS_KWARGS}
-        sig.bind_partial(**kw)
-
-
-def test_chronos_binds_pipeline_kwargs_without_num_samples():
-    # chronos has no num_samples parameter; the pipeline deliberately skips it
-    sig = inspect.signature(getattr(models, "chronos"))
-    kw = {**COMMON_KWARGS, **DARTS_KWARGS}
-    kw.pop("num_samples")
-    sig.bind_partial(**kw)
+def test_spec_fast_flag_matches_known_fast_models():
+    # Only the cheap statistical baselines are marked fast (the fast-only
+    # backtest allowlist now derives from the specs, not a hard-coded set).
+    for name in models.__all__:
+        expected = name in {"baseline", "movavg"}
+        assert models.get_model_spec(name).fast is expected, name
 
 
 def test_horizons_default_is_a_list():
-    # All models share a list-form `horizons` default (never a scalar `horizon`)
+    # All models share a list-form `horizons` default (never a scalar `horizon`).
+    # baseline/movavg are loose (no horizons param) and inla has its own interface.
     for name in models.__all__:
-        if name in LOOSE_MODELS or name == "inla":
+        if name in {"baseline", "movavg", "inla"}:
             continue
         sig = inspect.signature(getattr(models, name))
         p = sig.parameters["horizons"]

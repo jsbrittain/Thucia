@@ -90,6 +90,23 @@ def get_model(name: str):
     return __getattr__(name)
 
 
+def get_model_spec(name: str):
+    """Resolve a model's declarative `ModelSpec` (lazy; never eager-imports).
+
+    A conservative default is returned for any advertised model that does not
+    (yet) declare a `SPEC`, so ad-hoc models never break the pipeline.
+    """
+    from ._meta import ModelSpec
+
+    if name not in _exports:
+        raise ValueError(f"Unknown model '{name}'. Available models: {list_models()}")
+    mod = importlib.import_module(f".{name}", __name__)
+    spec = getattr(mod, "SPEC", None)
+    if spec is None:
+        spec = ModelSpec(name=name)
+    return spec
+
+
 def run_model(
     name: str,
     model,

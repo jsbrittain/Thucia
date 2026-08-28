@@ -16,12 +16,18 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from thucia.core.models import get_model_spec as _get_model_spec
 from thucia.core.pipeline import fit_model as _fit_model
 from thucia.core.pipeline import PipelineConfig
 from thucia.core.pipeline import score_model
 
-# Models that are cheap enough to fit across many backtest windows.
-_FAST_MODELS = frozenset({"baseline", "movavg"})
+
+def _is_fast(model_name: str) -> bool:
+    """Whether a model is cheap enough to fit across backtest windows.
+
+    Reads the model's declarative ModelSpec (`fast=True` for baseline/movavg).
+    """
+    return _get_model_spec(model_name).fast
 
 
 def expand_cutoffs(
@@ -202,7 +208,7 @@ def run_backtest(
     """
     bt = bt or BacktestConfig()
 
-    if bt.fast_only and bt.model_name not in _FAST_MODELS:
+    if bt.fast_only and not _is_fast(bt.model_name):
         raise ValueError(
             f"model '{bt.model_name}' is not a fast backtest model "
             "(baseline/movavg); set fast_only=False to allow it."
@@ -210,7 +216,7 @@ def run_backtest(
     if (
         bt.reference_model is not None
         and bt.fast_only
-        and bt.reference_model not in _FAST_MODELS
+        and not _is_fast(bt.reference_model)
     ):
         raise ValueError(
             f"reference model '{bt.reference_model}' is not a fast backtest model "
