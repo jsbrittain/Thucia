@@ -48,6 +48,8 @@ _API: dict[str, tuple[str, str | None]] = {
     "BacktestConfig": ("thucia.core.validation", "BacktestConfig"),
     "BacktestResult": ("thucia.core.validation", "BacktestResult"),
     "expand_cutoffs": ("thucia.core.validation", "expand_cutoffs"),
+    "load_case_source": ("thucia.core.cases.sources", "load_case_source"),
+    "load_sources": ("thucia.core.cases.sources", "load_sources"),
     "Registry": ("thucia.core.registry", "Registry"),
     "PluginNotFoundError": ("thucia.core.registry", "PluginNotFoundError"),
 }
@@ -89,6 +91,8 @@ __all__ = [
     "BacktestConfig",
     "BacktestResult",
     "expand_cutoffs",
+    "load_case_source",
+    "load_sources",
     "Registry",
     "PluginNotFoundError",
 ]

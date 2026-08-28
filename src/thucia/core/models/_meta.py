@@ -50,10 +50,7 @@ class ModelSpec:
             )
         if self.family not in FAMILIES:
             raise ValueError(
-                f"{self.name}: unknown family {self.family!r}; "
-                f"allowed: {FAMILIES}"
+                f"{self.name}: unknown family {self.family!r}; allowed: {FAMILIES}"
             )
         if self.sampling not in ("quantiles", "samples", "none"):
-            raise ValueError(
-                f"{self.name}: unknown sampling {self.sampling!r}"
-            )
+            raise ValueError(f"{self.name}: unknown sampling {self.sampling!r}")

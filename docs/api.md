@@ -38,6 +38,18 @@ a thin, data-in/data-out function configured by
    :members:
 ```
 
+## Case data sources
+
+```{eval-rst}
+.. autofunction:: thucia.core.cases.sources.load_case_source
+.. autofunction:: thucia.core.cases.sources.load_sources
+.. autoclass:: thucia.core.cases.sources.CaseSource
+   :members:
+
+.. autoclass:: thucia.core.cases.sources.infodengue.InfodengueSource
+   :members:
+```
+
 ## Data layer
 
 ```{eval-rst}
