@@ -53,7 +53,9 @@ def build_features(df: pd.DataFrame, specs: Iterable[Dict[str, Any]]) -> pd.Data
 
         # group_keys=False keeps the original index; result aligns with df
         if keys:
-            series = df.groupby(keys, group_keys=False).apply(_one_group)
+            series = df.groupby(keys, group_keys=False, observed=False).apply(
+                _one_group, include_groups=False
+            )
         else:
             series = _one_group(df)
 

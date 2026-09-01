@@ -6,9 +6,19 @@ from typing import Optional
 import pandas as pd
 from darts.models import ARIMA
 from darts.models import AutoARIMA
+from thucia.core.cases import period_freq_str
 from thucia.core.fs import DataFrame
+from thucia.core.models.utils import season_length_for_freq
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="sarima",
+    family="statistical",
+    supports=frozenset({"season_length"}),
+    sampling="samples",
+)
 
 
 # -------- SARIMA --------
@@ -54,17 +64,19 @@ class SarimaQuantiles(DartsBase):
                 end_date=self.train_end_date,
             )
             cov = self.remove_gid_covariate(covar_list[0])
-            model = AutoARIMA(season_length=self.season_length)
+            model = AutoARIMA(
+                season_length=self.season_length,
+                quantiles=self.quantiles,
+            )
             model.fit(
                 target_list[0],
                 future_covariates=cov,
-                quantiles=self.quantiles,
             )
             p, q, P, Q, s, d, D = model.model.model_["arma"]
             s_info = f"{s}"
             if s != self.season_length:
                 s = self.season_length
-                s_info = f"{s_info} -> 12 [adjusted]"
+                s_info = f"{s_info} -> {self.season_length} [adjusted]"
             self.fixed_order[target_gid] = {
                 "p": p,
                 "q": q,
@@ -100,12 +112,18 @@ class SarimaQuantiles(DartsBase):
                     self.fixed_order[gid]["P"],
                     self.fixed_order[gid]["D"],
                     self.fixed_order[gid]["Q"],
-                    12,  # season length (AutoArima can yield 1)
+                    self.season_length,
                 ),
-                quantiles=self.quantiles,
             )
         # Remove GID covariate since SARIMA is univariate
         cov = self.remove_gid_covariate(cov)
+        # AutoARIMA supports likelihood parameters directly; the fixed-order
+        # ARIMA path does not, so sample from it instead (converted to
+        # quantiles by DartsBase).
+        if self.sarima_retrain:
+            predict_kwargs = dict(num_samples=1, predict_likelihood_parameters=True)
+        else:
+            predict_kwargs = dict(num_samples=self.num_samples)
         # Historical forecasts
         bt = model.historical_forecasts(
             series=ts,
@@ -116,8 +134,7 @@ class SarimaQuantiles(DartsBase):
             retrain=retrain,
             last_points_only=True,
             verbose=False,
-            num_samples=1,
-            predict_likelihood_parameters=True,
+            **predict_kwargs,
         )
         return bt
 
@@ -131,11 +148,12 @@ def sarima(
     horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
-    retrain: bool = False,  # AutoARIMA at every step
+    retrain: bool = True,  # AutoARIMA at every step
     db_file: str | Path | None = None,
-    model_admin_level: int = 2,  # GID 2 level
+    model_admin_level: int = 0,  # GID level
     num_samples: int | None = None,
     multivariate: bool = False,
+    season_length: Optional[int] = None,  # None -> auto-detect from freq
     *args,
     **kwargs,
 ) -> DataFrame | pd.DataFrame:
@@ -153,6 +171,12 @@ def sarima(
     if multivariate:
         logging.warning("SARIMA does not support multivariate forecasting.")
 
+    if season_length is None:
+        if isinstance(df["Date"].dtype, pd.PeriodDtype):
+            season_length = season_length_for_freq(period_freq_str(df["Date"].dtype))
+        else:
+            season_length = 12
+
     # Instantiate model
     model = SarimaQuantiles(
         df=df,
@@ -164,8 +188,8 @@ def sarima(
         db_file=db_file,
         multivariate=False,
     )
-    model.set_season_length(season_length=12)
-    model.set_retrain(True)
+    model.set_season_length(season_length=season_length)
+    model.set_retrain(retrain)
 
     # Historical predictions
     tdf = model.historical_predictions(

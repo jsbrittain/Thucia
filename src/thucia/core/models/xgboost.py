@@ -7,7 +7,16 @@ import pandas as pd
 from darts.models import XGBModel
 from thucia.core.fs import DataFrame
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="xgboost",
+    family="darts",
+    supports=frozenset({"train_end_date", "retrain", "multivariate", "samples"}),
+    sampling="quantiles",
+    extras=(),
+)
 
 
 # -------- XGBoost --------
@@ -87,7 +96,7 @@ def xgboost(
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
     db_file: str | Path | None = None,
-    model_admin_level: int | None = None,
+    model_admin_level: int = 0,
     num_samples: int | None = None,
     multivariate: bool = True,
 ) -> DataFrame | pd.DataFrame:

@@ -9,12 +9,15 @@ import requests
 from thucia.core.cache import Cache
 from thucia.core.cases import align_date_types
 from thucia.core.fs import cache_folder
+from thucia.core.geo.plugin_base import source_registry
 from thucia.core.geo.plugin_base import SourceBase
 from thucia.core.geo.stats import raster_stats_gid2
 
 
+@source_registry.register()
 class WorldClim(SourceBase):
     ref = "worldclim"
+    granularity = "M"
     name = "WorldClim"
 
     cache_file = Path(cache_folder) / "climate" / "worldclim_stats.sqlite"

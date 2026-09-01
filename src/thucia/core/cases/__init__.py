@@ -1,7 +1,9 @@
 import logging
 import re
 import subprocess
+import warnings
 from itertools import product
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -13,8 +15,14 @@ from thucia.core.fs import read_zarr  # noqa: F401
 from thucia.core.fs import write_db  # noqa: F401
 from thucia.core.fs import write_nc  # noqa: F401
 from thucia.core.fs import write_zarr  # noqa: F401
+from thucia.core.quantiles import quantiles as default_quantiles
 
 from .wis import wis_bracher
+
+
+def period_freq_str(dtype: pd.PeriodDtype) -> str:
+    """Period-valid frequency string (e.g. 'M', not 'ME') from a Period dtype."""
+    return re.search(r"period\[(.+)\]", str(dtype.name)).group(1)
 
 
 def cases_per_month(*args, **kwargs) -> pd.DataFrame:
@@ -191,6 +199,10 @@ def r2_score(y_true, y_pred):
     ss_res = np.sum((y_true - y_pred) ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
 
+    if ss_tot == 0:
+        # Constant target: R^2 is undefined; follow sklearn's convention (0.0)
+        # so downstream aggregates don't propagate inf/nan.
+        return 0.0
     r2x = 1 - (ss_res / ss_tot)
     return r2x
 
@@ -214,25 +226,24 @@ def r2(df, pred_col, true_col, group_col=None, transform=None, df_filter: dict =
 
     r2_gid = pd.DataFrame(columns=[group_col, "R2"])
     groups = df[group_col].unique()
+    parts = []
     for group in groups:
         dfg = df[df[group_col] == group].copy()
-        r2_gid = pd.concat(
-            [
-                r2_gid,
-                pd.DataFrame(
-                    {
-                        group_col: [group],
-                        "R2": [
-                            r2_score(
-                                dfg[true_col],
-                                dfg[pred_col],
-                            )
-                        ],
-                    }
-                ),
-            ],
-            ignore_index=True,
+        parts.append(
+            pd.DataFrame(
+                {
+                    group_col: [group],
+                    "R2": [
+                        r2_score(
+                            dfg[true_col],
+                            dfg[pred_col],
+                        )
+                    ],
+                }
+            )
         )
+    if parts:
+        r2_gid = pd.concat(parts, ignore_index=True)
     return r2_gid
 
 
@@ -330,11 +341,40 @@ def run_job(cmd: list[str], cwd: str | None = None) -> None:
 
 
 def prepare_pdfm_embeddings(
-    pdfm_filename: str | None = None,
+    pdfm_filename: str | Path,
     provinces: list[str] | None = None,
+    geo_col: str = "GID_2",
 ) -> pd.DataFrame:
-    # Load PDFM embeddings
-    return read_nc(pdfm_filename)
+    """Load user-supplied PDFM embeddings from a NetCDF file.
+
+    PDFM embeddings are **not publicly distributed**; the file must be provided
+    by the user. Expected schema: one row per admin region with a geo code
+    column (default ``GID_2``) plus ``feature0``..``feature329`` embedding
+    columns. The embedded dimensions are batched:
+
+        0-127    Aggregated Search Trends
+        128-255  Maps and Busyness
+        256-329  Weather & Air Quality
+
+    When ``provinces`` is given, only rows whose geo code is listed are kept.
+    Duplicate geo codes are an encoding error: a warning is emitted and the
+    first occurrence of each geo code is kept.
+    """
+    df = read_nc(pdfm_filename)
+    if geo_col not in df.columns:
+        raise ValueError(f"Embeddings file must contain a '{geo_col}' column.")
+    if provinces is not None:
+        df = df[df[geo_col].isin(provinces)]
+    n_dupes = int(df[geo_col].duplicated().sum())
+    if n_dupes:
+        warnings.warn(
+            f"Embeddings contain {n_dupes} duplicate '{geo_col}' row(s); "
+            "this indicates an encoding error. Keeping the first occurrence "
+            "of each geo code.",
+            UserWarning,
+            stacklevel=2,
+        )
+    return df.drop_duplicates(subset=[geo_col])
 
 
 def prepare_embeddings(filename: str, embedding_type="pdfm") -> pd.DataFrame:
@@ -371,7 +411,7 @@ def align_date_types(
     """
     if isinstance(source_dates, pd.Series):
         if isinstance(target_dates.dtype, pd.PeriodDtype):
-            freq = re.search(r"period\[(.+)\]", str(target_dates.dtype.name)).group(1)
+            freq = period_freq_str(target_dates.dtype)
             if isinstance(source_dates.dtype, pd.PeriodDtype):
                 # Source is already Period, just ensure same freq
                 source_dates = source_dates.dt.asfreq(freq)
@@ -382,7 +422,7 @@ def align_date_types(
             source_dates = pd.to_datetime(source_dates)
     elif isinstance(source_dates, pd.Timestamp):
         if isinstance(target_dates.dtype, pd.PeriodDtype):
-            freq = re.search(r"period\[(.+)\]", str(target_dates.dtype.name)).group(1)
+            freq = period_freq_str(target_dates.dtype)
             source_dates = source_dates.to_period(freq)
         else:
             source_dates = pd.to_datetime(source_dates)
@@ -457,7 +497,7 @@ def quantile_sum_fast(
                       If provided, will slice E/U to the required k and reuse S.
     """
     if probabilities is None:
-        probabilities = [0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99]
+        probabilities = list(default_quantiles)
 
     k = len(gids)
     rng = np.random.default_rng(seed)
@@ -652,7 +692,8 @@ def quantile_sum_gid(
         gids = df_gid1[gid_col].unique()
         # use slice of shared_draws for this group
         # (quantile_sum_fast will slice shared_draws internally)
-        for horizon in [1, 3, 6, 12]:
+        horizons = df_gid1["horizon"].unique()
+        for horizon in horizons:
             dates = df_gid1["Date"].unique()
             for date in dates:
                 logging.info(

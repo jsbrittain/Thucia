@@ -30,9 +30,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-prefect = [
-    "prefect>=3.4.6",
-]
 vis = [
     "streamlit>=1.45.1",
     "colorcet>=3.1.0",
@@ -50,7 +47,6 @@ chronos = [
     "chronos-forecasting>=2.1.0",
 ]
 all = [
-    "prefect>=3.4.6",
     "streamlit>=1.45.1",
     "colorcet>=3.1.0",
     "seaborn>=0.13.2",
@@ -61,3 +57,21 @@ all = [
 ]
 
 [tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: heavy real model fits (run explicitly with `uv run pytest -m slow`)",
+    "network: requires a network download (e.g. timesfm checkpoint); excluded from CI",
+]
+addopts = "-m 'not slow' -p thucia_pytest_bootstrap"
+filterwarnings = [
+    "ignore:.*'pin_memory'.*:Warning",
+    "ignore:.*Non-invertible.*:Warning",
+    "ignore:.*Maximum Likelihood optimization failed.*:Warning",
+    "ignore:.*treespec.*LeafSpec.*:Warning",
+    "ignore:.*stochastic TimeSeries.*:Warning",
+    "ignore:.*invalid escape sequence.*:Warning",
+    "ignore:.*non-interactive.*:Warning",
+    "ignore:.*keep_geom_type.*dropped geometries.*:UserWarning",
+    "ignore:.*does not have valid feature names.*:UserWarning",
+]

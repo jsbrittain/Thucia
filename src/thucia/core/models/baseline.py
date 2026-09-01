@@ -8,7 +8,10 @@ from thucia.core.cases import align_date_types
 from thucia.core.fs import DataFrame
 from thucia.core.models.utils import sample_to_quantiles_vec
 
+from ._meta import ModelSpec
 from .utils import quantiles
+
+SPEC = ModelSpec(name="baseline", family="statistical", fast=True)
 
 
 class BaselineSamples:

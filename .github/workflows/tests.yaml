@@ -34,3 +34,25 @@ jobs:
         with:
           name: html-coverage-report
           path: htmlcov/
+
+  ci-slow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v2
+      - name: Setup dependencies
+        run: |
+          uv sync --all-extras
+          uv pip install -e .
+      - name: Run slow tests
+        # The network-gated timesfm checkpoint download is excluded in CI
+        # (run it locally with `uv run pytest -m slow`).
+        run: |
+          set -o pipefail
+          uv run pytest -m "slow and not network" 2>&1 | tee slow.txt
+          cat slow.txt

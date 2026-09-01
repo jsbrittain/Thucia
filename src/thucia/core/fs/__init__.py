@@ -17,6 +17,46 @@ def get_cache_folder():
     return cache_folder
 
 
+def _df_to_xarray(df: pd.DataFrame) -> xr.Dataset:
+    """Convert a DataFrame to an xarray Dataset, encoding Period columns.
+
+    netCDF/Zarr cannot encode a pandas Period dtype. Period columns (e.g. a
+    monthly ``Date``) are stored as their end timestamps with the period
+    metadata recorded in the Dataset attrs so the read path can restore them.
+    """
+    df = df.copy()
+    period_meta: dict[str, tuple[str, str]] = {}
+    for col in df.columns:
+        if isinstance(df[col].dtype, pd.PeriodDtype):
+            idx = pd.PeriodIndex(df[col])
+            period_meta[col] = (idx.freqstr, "end")
+            df[col] = idx.to_timestamp(how="end")
+    ds = df.to_xarray()
+    if period_meta:
+        first = next(iter(period_meta))
+        ds.attrs["period_var"] = first
+        ds.attrs["period_freq"] = period_meta[first][0]
+        ds.attrs["period_anchor"] = period_meta[first][1]
+    return ds
+
+
+def _restore_period_column(df: pd.DataFrame, attrs: dict) -> pd.DataFrame:
+    """Restore a Period column written by :func:`_df_to_xarray`."""
+    period_var = attrs.get("period_var")
+    period_freq = attrs.get("period_freq")
+    if period_var and period_freq and period_var in df.columns:
+        df[period_var] = pd.to_datetime(df[period_var])
+        if attrs.get("period_anchor", "end") == "end":
+            df[period_var] = df[period_var].dt.to_period(period_freq)
+        else:
+            df[period_var] = (
+                df[period_var]
+                .dt.to_period(period_freq)
+                .asfreq(period_freq, how="start")
+            )
+    return df
+
+
 def write_nc(
     df: pd.DataFrame | xr.Dataset,
     filename: str,
@@ -32,17 +72,12 @@ def write_nc(
         Name of the output NetCDF file.
     """
 
-    if isinstance(df, pd.DataFrame):
-        ds = df.to_xarray()
-    elif isinstance(df, xr.Dataset):
+    if isinstance(df, xr.Dataset):
         ds = df
+    elif isinstance(df, pd.DataFrame):
+        ds = _df_to_xarray(df)
     else:
         raise TypeError("Input must be a pandas DataFrame or xarray Dataset.")
-
-    if "Date" in df.columns and isinstance(df["Date"], pd.PeriodIndex):
-        ds.attrs["period_var"] = "Date"
-        ds.attrs["period_freq"] = df.index.freqstr
-        ds.attrs["period_anchor"] = "end" if df.index.is_end else "start"
 
     ds.to_netcdf(filename, mode="w", format="netcdf4")
     logging.info(f"Data written to {filename}")
@@ -62,11 +97,10 @@ def write_zarr(
         Name of the output Zarr file.
     """
 
-    if isinstance(df, pd.DataFrame):
-        df["Date"] = df["Date"].dt.to_timestamp()
-        ds = df.to_xarray()
-    elif isinstance(df, xr.Dataset):
+    if isinstance(df, xr.Dataset):
         ds = df
+    elif isinstance(df, pd.DataFrame):
+        ds = _df_to_xarray(df)
     else:
         raise TypeError("Input must be a pandas DataFrame or xarray Dataset.")
 
@@ -112,23 +146,10 @@ def read_nc(filename: str | Path) -> pd.DataFrame:
     pd.DataFrame
         The dataset read from the NetCDF file.
     """
-    ds = xr.open_dataset(str(filename)).to_dataframe().reset_index()
-
-    # Restore PeriodIndex (if applicable)
-    if "period_var" in ds.attrs and "period_freq" in ds.attrs:
-        period_var = ds.attrs["period_var"]
-        period_freq = ds.attrs["period_freq"]
-        if period_var in ds.columns:
-            ds[period_var] = pd.to_datetime(ds[period_var])
-            if ds.attrs.get("period_anchor", "end") == "end":
-                ds[period_var] = ds[period_var].dt.to_period(period_freq)
-            else:
-                ds[period_var] = (
-                    ds[period_var]
-                    .dt.to_period(period_freq)
-                    .asfreq(period_freq, how="start")
-                )
-    return ds
+    ds = xr.open_dataset(str(filename))
+    attrs = dict(ds.attrs)
+    df = ds.to_dataframe().reset_index()
+    return _restore_period_column(df, attrs)
 
 
 def read_zarr(filename: str | Path) -> pd.DataFrame:
@@ -145,8 +166,10 @@ def read_zarr(filename: str | Path) -> pd.DataFrame:
     pd.DataFrame
         The dataset read from the Zarr file.
     """
-    ds = xr.open_zarr(str(filename)).to_dataframe().reset_index()
-    return ds
+    ds = xr.open_zarr(str(filename))
+    attrs = dict(ds.attrs)
+    df = ds.to_dataframe().reset_index()
+    return _restore_period_column(df, attrs)
 
 
 def read_db(

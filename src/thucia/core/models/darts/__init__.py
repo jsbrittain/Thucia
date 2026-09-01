@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 from darts import TimeSeries
 from thucia.core.cases import align_date_types
+from thucia.core.cases import period_freq_str
 from thucia.core.fs import DataFrame
 from thucia.core.models.utils import quantiles as default_quantiles
 from thucia.core.models.utils import sample_to_quantiles_vec
@@ -44,6 +45,14 @@ class DartsBase:
         self.multivariate = multivariate
         self.quantiles = quantiles or default_quantiles
         self.fit_delta = False
+
+        # Models assume the geo column is categorical (e.g. multivariate
+        # encoding via .cat.codes, and stable category ordering across GIDs).
+        # Coerce on the local copy if the caller supplied plain strings.
+        if isinstance(self.df, pd.DataFrame) and self.geo_col in self.df.columns:
+            if not isinstance(self.df[self.geo_col].dtype, pd.CategoricalDtype):
+                self.df = self.df.copy()
+                self.df[self.geo_col] = self.df[self.geo_col].astype("category")
 
         if self.multivariate and "GID_2_codes" not in self.covariate_cols:
             self.covariate_cols.append("GID_2_codes")  # added in get_cases
@@ -141,13 +150,20 @@ class DartsBase:
 
         target_list = []
         covar_list = []
+        # darts needs a timestamp frequency; derive it from the Period dtype so
+        # weekly/daily cadences keep their anchor (fallback: month-end).
+        if isinstance(df[self.date_col].dtype, pd.PeriodDtype):
+            freq = period_freq_str(df[self.date_col].dtype)
+            if freq == "M":
+                freq = "ME"  # darts' timestamp alias for month-end
+        else:
+            freq = "ME"
         for gid in target_gids:
             gdf = df[
                 (df[self.geo_col] == gid)
                 & (df["Date"] >= start_date)
                 & (df["Date"] <= end_date)
-            ]
-            freq = "ME"
+            ].copy()
             # darts requires timestamp
             gdf["Date"] = (
                 gdf["Date"].dt.to_timestamp(how="end").dt.normalize().astype("<M8[ns]")
@@ -264,74 +280,14 @@ class DartsBase:
 
         return tdf
 
-    def _extract_horizons(
-        self,
-        bt,
-        gid,
-    ):
-        # process horizons separately
-        rows = []
-        for h in self.horizons:
-            vals = np.concat([TimeSeries.all_values(t)[h, :, :] for t in bt])
-            dates = np.array([t.time_index[h] for t in bt])
-
-            out = pd.DataFrame(vals)
-            out["Date"] = dates
-            out = out.melt(
-                id_vars="Date",
-                var_name="sample",  # may be quantiles, renamed later
-                value_name="prediction",
-            )
-            out["sample"] = out["sample"].astype(int)
-            out[self.geo_col] = gid
-
-            if not self.sampling_method or self.sampling_method == "samples":
-                if len(out) > 1:
-                    # samples to quantiles
-                    out = (
-                        pd.concat(
-                            {
-                                k: sample_to_quantiles_vec(
-                                    np.expm1(g["prediction"]).clip(
-                                        lower=0
-                                    ),  # transform before quantiles
-                                    self.quantiles,
-                                )
-                                for k, g in out.groupby(
-                                    ["Date", self.geo_col], observed=False
-                                )
-                            },
-                            names=["Date", self.geo_col],
-                        )
-                        .reset_index()
-                        .rename(columns={"value": "prediction"})
-                        .drop(columns=["level_2"])
-                    )
-                    out["horizon"] = h + 1  # 1-based horizon
-                else:
-                    out["quantile"] = 0.5
-                    out["horizon"] = h + 1  # 1-based horizon
-                    out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                    out = out.drop(columns=["sample"])
-            elif self.sampling_method == "quantiles":
-                out = out.rename(columns={"sample": "quantile"})
-                out["quantile"] = out["quantile"].apply(lambda x: self.quantiles[x])
-                out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
-                out["horizon"] = h + 1  # 1-based horizon
-            else:
-                raise ValueError(f"Unknown sampling_method '{self.sampling_method}'")
-
-            rows.append(out)
-        return rows
-
     def _merge_cases(
         self,
         df: pd.DataFrame,
         preds: pd.DataFrame,
     ) -> pd.DataFrame:
         # Ensure Date is in original format
-        freq = df["Date"].dtype.freq.freqstr[0]
-        if not pd.api.types.is_period_dtype(preds["Date"]):
+        freq = period_freq_str(df["Date"].dtype)
+        if not isinstance(preds["Date"].dtype, pd.PeriodDtype):
             # Coerce to period
             preds["Date"] = preds["Date"].dt.to_period(freq)
         elif preds["Date"].dtype.freq.freqstr != freq:
@@ -446,17 +402,40 @@ class DartsBase:
                 out = bt.to_dataframe().reset_index(names="Date")
                 out = out.melt(
                     id_vars="Date",
-                    var_name="quantile",
+                    var_name="var",
                     value_name="prediction",
-                )
-                out["quantile"] = (
-                    out["quantile"].str.split(".").str[-1].astype(float) / 1000
                 )
                 out["horizon"] = horizon
                 out[self.geo_col] = gid
-                if self.fit_delta:
-                    out["prediction"] = out["prediction"].cumsum()
-                out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
+                if out["var"].str.contains("_s").any():
+                    # Sample-based output (e.g. darts ARIMA with num_samples):
+                    # collapse samples to the canonical quantile grid.
+                    qparts = []
+                    for date, g in out.groupby("Date"):
+                        s2q = sample_to_quantiles_vec(
+                            np.clip(np.expm1(g["prediction"].to_numpy()), 0, None),
+                            self.quantiles,
+                        )
+                        qparts.append(
+                            pd.DataFrame(
+                                {
+                                    "Date": date,
+                                    "horizon": horizon,
+                                    self.geo_col: gid,
+                                    "quantile": s2q["quantile"],
+                                    "prediction": s2q["value"],
+                                }
+                            )
+                        )
+                    out = pd.concat(qparts, ignore_index=True)
+                else:
+                    out["quantile"] = (
+                        out["var"].str.split(".").str[-1].astype(float) / 1000
+                    )
+                    out = out.drop(columns=["var"])
+                    if self.fit_delta:
+                        out["prediction"] = out["prediction"].cumsum()
+                    out["prediction"] = np.expm1(out["prediction"]).clip(lower=0)
                 tdf_out.append(self._merge_cases(df, out))
                 toc = pd.Timestamp.now()
                 logging.info(f"Region {gid} done in {toc - tic}")

@@ -1,5 +1,6 @@
 import logging
 import unicodedata
+import warnings
 from pathlib import Path
 
 import geopandas as gpd
@@ -7,12 +8,12 @@ import pandas as pd
 import requests
 from rapidfuzz import fuzz
 from rapidfuzz import process
+from thucia.core.cases import period_freq_str
 from thucia.core.fs import cache_folder
 from thucia.core.fs import DataFrame
 
+from .plugin_base import source_registry
 from .plugin_loader import load_plugins
-
-plugins = None
 
 
 def lookup_gid1(iso3, admin1_names: list[str] | None = None):
@@ -272,51 +273,129 @@ def align_admin2_regions(
     return df
 
 
-def refresh_plugins(verbose: bool = False) -> None:
+def refresh_plugins(verbose: bool = False) -> dict[str, type]:
+    """Import source modules so plugins self-register.
+
+    Returns the ``{ref: class}`` registry mapping.
     """
-    Reloads the plugins to ensure the latest versions are used.
-    """
-    global plugins
     plugins = load_plugins()
     if verbose:
         print("Source plugins loaded:")
-        for ref, plugin in plugins.items():
-            print(f" - [{ref}] {plugin.name}")
-    logging.info("Plugins loaded: " + ", ".join([plugin for plugin in plugins]))
+        for ref in source_registry.names():
+            print(f" - [{ref}] {source_registry.get(ref).name}")
+    logging.info("Plugins loaded: " + ", ".join(source_registry.names()))
+    return plugins
 
 
-def merge_geo_sources(df: pd.DataFrame, sources: list[str]) -> pd.DataFrame:
+def _ensure_plugins_loaded() -> None:
+    if not source_registry.names():
+        load_plugins()
+
+
+def _freq_day_scale(freq: str) -> int:
+    """Rough days-per-period for a pandas frequency (for granularity comparison)."""
+    f = freq.upper()
+    if f.startswith("D"):
+        return 1
+    if f.startswith("W"):
+        return 7
+    if f.startswith(("M", "B", "Q")):
+        return 30
+    return 365
+
+
+def interpolate_covariates(
+    df: pd.DataFrame,
+    cols: list[str],
+    gid_col: str = "GID_2",
+    method: str = "linear",
+) -> tuple[pd.DataFrame, int]:
+    """Interpolate sparse covariate columns onto the full case grid, per GID.
+
+    `df["Date"]` is expected to be a Period column. Each column's known points
+    are reindexed onto the GID's period grid and interpolated; grid edges are
+    filled with the nearest value so every row is populated.
+
+    method: "linear"/"time" (default, smooth), "ffill"/"pad", "bfill"/"backfill",
+    or any other method accepted by ``pandas.Series.interpolate``.
+
+    Returns ``(df, n_filled)`` where n_filled is the number of rows filled.
+    """
+    out = df.copy()
+    n_filled = 0
+    for _, g in out.groupby(gid_col, observed=False):
+        ts = pd.PeriodIndex(g["Date"]).to_timestamp(how="end")
+        idx = g.index
+        for col in cols:
+            if col not in out.columns:
+                continue
+            s = pd.Series(g[col].to_numpy(), index=ts)
+            known = s.notna()
+            if not known.any():
+                continue
+            if known.sum() == 1:
+                filled = s.ffill().bfill()
+            elif method.lower() in ("ffill", "pad", "forward"):
+                filled = s.ffill().bfill()
+            elif method.lower() in ("bfill", "backfill", "back"):
+                filled = s.bfill().ffill()
+            else:
+                filled = s.interpolate(method="time" if method == "linear" else method)
+                filled = filled.ffill().bfill()
+            n_filled += int((~known).sum())
+            out.loc[idx, col] = filled.to_numpy()
+    return out, n_filled
+
+
+def merge_geo_sources(
+    df: pd.DataFrame, sources: list[str], method: str = "linear"
+) -> pd.DataFrame:
     """
     Add source information to the DataFrame.
 
     Parameters:
     df (pd.DataFrame): The DataFrame to which source information will be added.
-    source (list[str]): List of sources to be added. Format: ['origin.field']
-                        where project is optional, e.g. ['worldclim.*', 'edo.spi-7']
+    sources (list[str]): List of sources to be added. Format: ['origin.field']
+                         where field may be '*', e.g. ['worldclim.*', 'edo.spi6'].
+    method (str): Interpolation method used when a source's granularity is
+                  coarser than the case-data frequency (e.g. monthly sources on
+                  a weekly grid). Default "linear"; also "ffill"/"bfill".
     """
-    global plugins
-    if not plugins:
-        refresh_plugins()
+    _ensure_plugins_loaded()
 
     # Collate source information
-    d_sources = {}
+    d_sources: dict[str, list[str]] = {}
     for source in sources:
         if "." not in source:
             raise ValueError(
                 "Source format must be 'origin.field', "
                 "e.g. 'worldclim.*' or 'edo.spi6'."
             )
-        origin, field = source.split(".")
-        if origin not in d_sources:
-            d_sources[origin] = []
-        d_sources[origin].append(field)
+        origin, field = source.split(".", 1)
+        d_sources.setdefault(origin, []).append(field)
 
-    for source, fields in d_sources.items():
-        try:
-            source_module = plugins.get(source)
-        except KeyError:
-            logging.error(f"Source plugin '{source}' not found.")
-        df = source_module.merge(df, metrics=fields)
+    for origin, fields in d_sources.items():
+        plugin = source_registry.get(origin)()
+        orig_cols = set(df.columns)
+        merged = plugin.merge(df, metrics=fields)
+        new_cols = [c for c in merged.columns if c not in orig_cols]
+        if not new_cols or not isinstance(merged["Date"].dtype, pd.PeriodDtype):
+            df = merged
+            continue
+
+        case_freq = period_freq_str(merged["Date"].dtype)
+        granularity = getattr(plugin, "granularity", "M")
+        if _freq_day_scale(case_freq) < _freq_day_scale(granularity):
+            merged, n_filled = interpolate_covariates(merged, new_cols, method=method)
+            if n_filled:
+                warnings.warn(
+                    f"Source '{origin}' is {granularity}-granular; interpolated "
+                    f"{n_filled} covariate value(s) onto the {case_freq} case grid "
+                    f"(method='{method}').",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        df = merged
 
     return df
 
@@ -430,13 +509,16 @@ def pad_admin2(df: DataFrame | pd.DataFrame) -> DataFrame:
     return out
 
 
-def merge_sources(df, covars: list[str]) -> None:
+def merge_sources(df, covars: list[str], method: str = "linear") -> pd.DataFrame:
     """
     Merge geographic and climatological covariates into the main DataFrame.
+
+    `method` is the interpolation method used when a source's granularity is
+    coarser than the case-data frequency (see merge_geo_sources).
     """
     categorical_covars = ["GID_1", "GID_2", "ADM1", "ADM2", "Status"]
     for covar in covars:
-        df_covar = merge_geo_sources(df, [covar])
+        df_covar = merge_geo_sources(df, [covar], method=method)
         for cat in categorical_covars:
             if cat in df_covar.columns:
                 df_covar[cat] = df_covar[cat].astype("category")

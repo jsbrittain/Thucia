@@ -211,7 +211,7 @@ class DataFrame:
         return None
 
     def head(self, n: int = 5) -> pd.DataFrame:
-        return self.query_df(f"SELECT * FROM {self.table} LIMIT {n}").fetch_df()
+        return self.query_df(f"SELECT * FROM {self.table} LIMIT {n}")
 
     def query(self, sql_filter: str) -> pd.DataFrame:
         """Run a WHERE-style filter and return DataFrame."""
@@ -296,8 +296,9 @@ class DataFrame:
 
     def write_df(self, df: pd.DataFrame, con=None):
         """Write a pandas DataFrame to the DuckDB table, replacing existing data.
+
         Minimal metadata support: detects Period dtypes and stores column_name
-         -> freq in __column_metadata__.
+        -> freq in __column_metadata__.
         """
         df_to_write, meta = self._prepare_df(df)
 

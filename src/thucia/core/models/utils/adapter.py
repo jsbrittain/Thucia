@@ -1,4 +1,5 @@
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import List
 from typing import Optional
@@ -42,9 +43,15 @@ def _prepare_fit_table(
 ) -> pd.DataFrame:
     date_col, gid_col, yhat_col = use_cols
     if train_mask is not None:
-        dfm = dfm[train_mask.values]
+        dfm = dfm[train_mask.values].copy()
     if cutoff_date is not None:
-        dfm = dfm[dfm[date_col] <= pd.to_datetime(cutoff_date)]
+        dates = dfm[date_col]
+        if isinstance(dates.dtype, pd.PeriodDtype):
+            # Compare on the same Period grid as the model data
+            cutoff = pd.Period(pd.to_datetime(cutoff_date), freq=dates.dt.freq)
+        else:
+            cutoff = pd.to_datetime(cutoff_date)
+        dfm = dfm[dates <= cutoff].copy()
     if dfm.empty:
         raise ValueError("No rows available to fit adapter after masking/cutoff.")
     dfm["residual"] = dfm[y_col].astype(np.float32) - dfm[yhat_col].astype(np.float32)
@@ -475,12 +482,37 @@ def residual_regression(
 
     provinces = df_model[geo_col].unique()
     df_predictors = df_predictors[df_predictors[geo_col].isin(provinces)]
+    dupes = df_predictors.loc[df_predictors[geo_col].duplicated(), geo_col].unique()
+    if len(dupes):
+        # Duplicate geo codes indicate an encoding error in the embeddings
+        # file; warn and keep the first occurrence of each code.
+        warnings.warn(
+            f"Embeddings contain duplicate '{geo_col}' codes: {list(dupes)[:5]}"
+            " — this indicates an encoding error; keeping the first occurrence.",
+            UserWarning,
+            stacklevel=2,
+        )
+        df_predictors = df_predictors.drop_duplicates(subset=[geo_col])
     df_predictors.set_index(geo_col, inplace=True)
     feature_cols = [c for c in df_predictors.columns if c.startswith("feature")]
     df_predictors = df_predictors[feature_cols]
-    assert set(df_predictors.index.unique()) == set(df_model[geo_col]), (
-        "Model and embeddings must contain the same geographic codes."
-    )
+    embedding_gids = set(df_predictors.index.unique())
+    missing = set(df_model[geo_col]) - embedding_gids
+    if missing:
+        # Some provinces have no embeddings: warn and continue on the rest
+        # (mirrors the old analysis_core.py call-site subsampling).
+        warnings.warn(
+            f"No embeddings for {len(missing)} geo code(s): "
+            f"{sorted(missing)[:5]}{'...' if len(missing) > 5 else ''} "
+            "— continuing with the provinces that have embeddings.",
+            UserWarning,
+            stacklevel=2,
+        )
+        df_model = df_model[df_model[geo_col].isin(embedding_gids)]
+        if df_model.empty:
+            raise ValueError(
+                "No model provinces have embeddings; cannot run residual regression."
+            )
 
     adapter = None
     if method == "ridge":

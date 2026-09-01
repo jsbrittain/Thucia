@@ -1,5 +1,4 @@
 import thucia.core
-import thucia.flow
 
 
 def test_smoke():

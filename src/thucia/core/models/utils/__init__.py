@@ -1,31 +1,30 @@
 import logging
-import re
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
+from thucia.core.cases import period_freq_str
 
+from ..quantiles import quantiles  # canonical grid; re-exported for compatibility
 from .adapter import residual_regression as residual_regression
 from .residual_quantiles import add_residual_quantiles as add_residual_quantiles
 
-quantiles = [
-    0.01,
-    0.025,
-    0.05,
-    0.1,
-    0.2,
-    0.3,
-    0.4,
-    0.5,
-    0.6,
-    0.7,
-    0.8,
-    0.9,
-    0.95,
-    0.975,
-    0.99,
-]
+
+def season_length_for_freq(freq: str | None) -> int:
+    """Number of periods per seasonal cycle for a pandas frequency string.
+
+    Monthly -> 12, weekly (any anchor) -> 52, daily -> 365. Unknown or missing
+    frequencies default to monthly (12).
+    """
+    if not freq:
+        return 12
+    f = str(freq)
+    if f.startswith("W"):
+        return 52
+    if f.startswith("D"):
+        return 365
+    return 12
 
 
 def sample_to_quantiles_vec(samples, quantiles=quantiles):
@@ -121,7 +120,7 @@ def sanitize_dates_inplace(
     """
     Ensure the date column is in datetime format and at month-end.
     """
-    freq = re.search(r"period\[(.+)\]", df["Date"].dtype.name).group(1)
+    freq = period_freq_str(df["Date"].dtype)
     if isinstance(start_date, str):
         start_date = pd.to_datetime(start_date)
     if isinstance(end_date, str):
@@ -216,18 +215,18 @@ def sanitise_covariates(df, covariate_cols, start_date, gid_col="GID_2"):
     if isinstance(start_date, str):
         start_date = pd.to_datetime(start_date)
     if isinstance(start_date, pd.Timestamp):
-        freq = re.search(r"period\[(.+)\]", df["Date"].dtype.name).group(1)
-        start_date = pd.to_period(start_date, freq)
+        freq = period_freq_str(df["Date"].dtype)
+        start_date = start_date.to_period(freq)
     if not start_date:
         start_date = df["Date"].max()
 
     # Covariate sanitisation
     for c in covariate_cols:
         # NaN replacement: seasonal mean, forward and back fill
-        df[c] = df.groupby([gid_col, df["Date"].dt.month])[c].transform(
+        df[c] = df.groupby([gid_col, df["Date"].dt.month], observed=False)[c].transform(
             lambda s: s.fillna(s.mean())
         )
-        df[c] = df.groupby(gid_col)[c].ffill().bfill()
+        df[c] = df.groupby(gid_col, observed=False)[c].ffill().bfill()
         # Standardise using pre- start date values
         mask = df["Date"] < start_date
         if False:

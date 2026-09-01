@@ -8,7 +8,15 @@ from darts.models import TiDEModel
 from darts.utils.likelihood_models import GaussianLikelihood
 from thucia.core.fs import DataFrame
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="tide",
+    family="darts",
+    sampling="samples",
+    extras=("torch",),
+)
 
 
 # -------- TiDE --------
@@ -26,7 +34,7 @@ class TiDESamples(DartsBase):
         super().__init__(*args, **kwargs)
         self.sampling_method = "samples"
 
-    def build_model(self):
+    def build_model(self, horizon=None):
         return TiDEModel(
             input_chunk_length=self.input_chunk_length,
             output_chunk_length=self.output_chunk_length,
@@ -55,7 +63,9 @@ class TiDESamples(DartsBase):
             verbose=True,
         )
 
-    def historical_forecasts(self, ts, cov, start_date=None, retrain=True, **kwargs):
+    def historical_forecasts(
+        self, ts, cov, start_date=None, retrain=True, horizon=1, **kwargs
+    ):
         logging.info(
             "Generating TiDE historical forecasts "
             f"from {start_date} with retrain={retrain}..."
@@ -63,11 +73,11 @@ class TiDESamples(DartsBase):
         bt = self.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
-            forecast_horizon=self.horizon,
+            forecast_horizon=horizon,
             start=start_date,
             stride=1,
             retrain=retrain,
-            last_points_only=False,  # this changes the output format
+            last_points_only=True,
             verbose=False,
             num_samples=self.num_samples,
         )
@@ -82,12 +92,12 @@ def tide(
     train_start_date: str | pd.Timestamp = pd.Timestamp.min,
     train_end_date: str | pd.Timestamp = pd.Timestamp.max,
     gid_1: Optional[List[str]] = None,
-    horizon: int = 1,
+    horizons: List[int] = [1],
     case_col: str = "Log_Cases",
     covariate_cols: Optional[List[str]] = None,
     retrain: bool = True,  # Only use False for a quick test
     db_file: str | Path | None = None,
-    model_admin_level: int | None = None,
+    model_admin_level: int = 0,
     num_samples: int | None = None,
     multivariate: bool = True,
 ) -> DataFrame | pd.DataFrame:
@@ -103,7 +113,7 @@ def tide(
         df=df,
         case_col=case_col,
         covariate_cols=covariate_cols,
-        horizon=horizon,
+        horizons=horizons,
         num_samples=num_samples,
         db_file=db_file,
         train_start_date=train_start_date,

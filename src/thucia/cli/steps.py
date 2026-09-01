@@ -30,7 +30,7 @@ def cases_per_month(
     tdf = read_db(path / cases_file)
 
     # Aggregate cases per month
-    tdf = cases.cases_per_month(tdf)
+    tdf = cases.cases_per_month(tdf, cases_col=cases_col)
     tdf = geo.pad_admin2(tdf)  # Ensure all Admin-2 regions included for covariate maps
 
     # Write output

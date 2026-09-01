@@ -8,7 +8,16 @@ from darts.models import TCNModel
 from darts.utils.likelihood_models import QuantileRegression
 from thucia.core.fs import DataFrame
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="tcn",
+    family="darts",
+    supports=frozenset({"train_end_date", "retrain", "multivariate", "samples"}),
+    sampling="quantiles",
+    extras=("torch",),
+)
 
 
 # -------- TCN --------

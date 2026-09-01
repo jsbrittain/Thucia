@@ -96,9 +96,11 @@ def wis_bracher(
     # score per group
     out_rows = []
     gcols = list(group_cols)
+    if "model" in df.columns and "model" not in gcols:
+        gcols.append("model")
 
     # Index into group_cols, returning index (keys) and group (g) as DataFrame
-    for keys, g in df.groupby(gcols, sort=True):
+    for keys, g in df.groupby(gcols, sort=True, observed=False):
         # Cases (assumed unique in group)
         y = g.iloc[0][obs_col]
         # predictions and levels

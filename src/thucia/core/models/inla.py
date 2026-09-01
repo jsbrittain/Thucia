@@ -9,6 +9,10 @@ from thucia.core.containers import build_container
 from thucia.core.containers import run_in_container
 from thucia.core.fs import cache_folder
 
+from ._meta import ModelSpec
+
+SPEC = ModelSpec(name="inla", family="container")
+
 
 def inla(
     df: pd.DataFrame,

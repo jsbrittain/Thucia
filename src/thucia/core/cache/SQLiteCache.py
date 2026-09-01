@@ -1,10 +1,27 @@
+import contextlib
 import sqlite3
 from itertools import islice
+from typing import Iterator
 from typing import List
 
 import pandas as pd
 
 from .CacheBase import CacheBase
+
+
+@contextlib.contextmanager
+def _connect(db_path) -> Iterator[sqlite3.Connection]:
+    """Open a connection that commits/rolls back AND always closes.
+
+    ``with sqlite3.connect(...) as conn`` only commits/rolls back; it leaks the
+    connection (ResourceWarning at GC).
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 class SQLiteCache(CacheBase):
@@ -29,7 +46,7 @@ class SQLiteCache(CacheBase):
         if not self.cache_file.exists():
             return None
 
-        with sqlite3.connect(self.cache_file) as conn:
+        with _connect(self.cache_file) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 f"""
@@ -72,7 +89,7 @@ class SQLiteCache(CacheBase):
         batch_size: int = 1000,
     ):
         rows = []
-        with sqlite3.connect(db_path) as conn:
+        with _connect(db_path) as conn:
             for batch in self._chunked_iterable(keys, batch_size):
                 keynames_placeholder = ",".join(keynames)
                 keys_placeholder = ",".join(["?"] * len(keynames))
@@ -96,7 +113,7 @@ class SQLiteCache(CacheBase):
         if not self.cache_file.parent.exists():
             self.cache_file.parent.mkdir(parents=True)
 
-        with sqlite3.connect(self.cache_file) as conn:
+        with _connect(self.cache_file) as conn:
             cursor = conn.cursor()
             column_definitions = ", ".join(
                 f"{col} {self.columntypes[col]}" for col in self.columns

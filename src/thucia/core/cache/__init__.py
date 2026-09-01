@@ -1,15 +1,15 @@
+from thucia.core.registry import Registry
+
 from .CacheBase import CacheBase
 from .SQLiteCache import SQLiteCache
 
+cache_registry: Registry = Registry("cache backend")
+
+cache_registry.register("sqlite")(SQLiteCache)
+
 
 class Cache:
-    _registry = {
-        "sqlite": SQLiteCache,
-    }
+    """Factory for cache backends, selected by name (case-insensitive)."""
 
     def __new__(cls, name: str, *args, **kwargs) -> CacheBase:
-        try:
-            cache_class = cls._registry[name.lower()]
-            return cache_class(*args, **kwargs)
-        except KeyError:
-            raise ValueError(f"Unknown cache type: '{name}'")
+        return cache_registry.get(name)(*args, **kwargs)

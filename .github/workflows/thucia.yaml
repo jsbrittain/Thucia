@@ -7,14 +7,30 @@ on:
       - main
     paths-ignore:
       - "**.md"
-      - "docs/**"
   push:
     branches:
       - main
     paths-ignore:
       - "**.md"
-      - "docs/**"
 
 jobs:
   tests:
     uses: ./.github/workflows/tests.yaml
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v2
+      - name: Setup dependencies
+        run: |
+          uv sync --all-extras
+          uv pip install -e .
+          uv pip install -r docs/requirements.txt
+      - name: Build docs
+        run: uv run sphinx-build -b html -W --keep-going docs docs/_build/html

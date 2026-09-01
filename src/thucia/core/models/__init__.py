@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +26,19 @@ from .utils import samples_to_quantiles
 #
 
 # discover candidate module -> symbol mappings once
+#
+# Contract: a module is a *model* iff it exposes a callable whose name matches
+# the module name (e.g. `sarima.py` -> `sarima(df, ...)`). Helper libraries that
+# live in this directory but do not satisfy that contract must be registered in
+# _HELPER_MODULES so they are not advertised as models.
+_HELPER_MODULES = frozenset({"ensemble", "quantiles"})
+
 _exports: dict[str, str] = {}
 for _m in pkgutil.iter_modules(__path__):
     name = _m.name
-    if not name.startswith("_"):
-        _exports[name] = name
+    if name.startswith("_") or _m.ispkg or name in _HELPER_MODULES:
+        continue
+    _exports[name] = name
 
 __all__ = sorted(_exports)  # advertise what the package exports
 
@@ -43,6 +53,60 @@ def __getattr__(name: str) -> Any:  # called on first access if not yet in globa
     return obj
 
 
+class _ModelNamespace(types.ModuleType):
+    """Module subclass so a model callable always wins over its same-named
+    submodule. Importing `thucia.core.models.<name>` (e.g. via a direct
+    `from thucia.core.models.sarima import sarima`) makes the import system set
+    the parent attribute to the *submodule*, shadowing the model function and
+    breaking `getattr(models, name)` / `from thucia.core.models import name`.
+    Intercept attribute access to resolve the callable regardless of import
+    order.
+    """
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in _exports:
+            try:
+                current = object.__getattribute__(self, name)
+            except AttributeError:
+                current = None
+            if callable(current):
+                return current
+            return __getattr__(name)
+        return object.__getattribute__(self, name)
+
+
+sys.modules[__name__].__class__ = _ModelNamespace
+
+
+def list_models() -> list[str]:
+    """Return the names of all advertised forecast models."""
+    return list(__all__)
+
+
+def get_model(name: str):
+    """Resolve a model callable by name (raises ValueError if unknown)."""
+    if name not in _exports:
+        raise ValueError(f"Unknown model '{name}'. Available models: {list_models()}")
+    return __getattr__(name)
+
+
+def get_model_spec(name: str):
+    """Resolve a model's declarative `ModelSpec` (lazy; never eager-imports).
+
+    A conservative default is returned for any advertised model that does not
+    (yet) declare a `SPEC`, so ad-hoc models never break the pipeline.
+    """
+    from ._meta import ModelSpec
+
+    if name not in _exports:
+        raise ValueError(f"Unknown model '{name}'. Available models: {list_models()}")
+    mod = importlib.import_module(f".{name}", __name__)
+    spec = getattr(mod, "SPEC", None)
+    if spec is None:
+        spec = ModelSpec(name=name)
+    return spec
+
+
 def run_model(
     name: str,
     model,
@@ -50,11 +114,13 @@ def run_model(
     path: Path,
     save_samples=False,
     save_quantiles=True,
-    model_args=[],
-    model_kwargs={},
+    model_args=None,
+    model_kwargs=None,
 ):
     # Cases
     tic = pd.Timestamp.now()
+    model_args = model_args if model_args is not None else []
+    model_kwargs = model_kwargs if model_kwargs is not None else {}
     df_model = model(df, *model_args, **model_kwargs)
     toc = pd.Timestamp.now()
 

@@ -10,7 +10,15 @@ from timesfm import TimesFm
 from timesfm import TimesFmCheckpoint
 from timesfm import TimesFmHparams
 
+from ._meta import ModelSpec
 from .darts import DartsBase
+
+SPEC = ModelSpec(
+    name="timesfm",
+    family="darts",
+    sampling="samples",
+    extras=("timesfm[torch]",),
+)
 
 
 # -------- TimesFM --------

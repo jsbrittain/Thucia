@@ -53,6 +53,9 @@ def choropleth(
     legend=True,
     symmetric_cmap=False,
     colorbar=True,
+    vmin=None,
+    vmax=None,
+    colorbar_format="%.0f",
 ):
     if isinstance(admin_level, int):
         admin_level = f"GID_{admin_level}"
@@ -104,6 +107,8 @@ def choropleth(
             edgecolor=edgecolor,
             linewidth=linewidth,
             aspect="auto",
+            vmin=vmin,
+            vmax=vmax,
         )
 
     values = merged[value_col]
@@ -132,7 +137,7 @@ def choropleth(
             sm,
             cax=cax,
         )
-        cbar.ax.yaxis.set_major_formatter(FormatStrFormatter("%.0f"))
+        cbar.ax.yaxis.set_major_formatter(FormatStrFormatter(colorbar_format))
 
     if ax is None:
         plt.show()
@@ -249,6 +254,7 @@ def hexmap(
         hex_values = (
             assigned.groupby("hex_id")[value_col].agg("mean").reset_index()
         )  # mean by default; could use sum
+        hex_values = hex_values.rename(columns={value_col: "value"})
         hexmap = hex_gdf.merge(hex_values, on="hex_id", how="left")
     else:
         # area-weighted aggregation (more accurate)
@@ -274,7 +280,8 @@ def hexmap(
                     {
                         "value": (d[value_col] * d["area"]).sum() / d["area"].sum(),
                     }
-                )
+                ),
+                include_groups=False,
             )
             .reset_index()
         )
@@ -289,6 +296,8 @@ def hexmap(
     ax.set_axis_off()
     if ax is None:
         plt.show()
+
+    return hexmap
 
 
 def hex_cartogram(
@@ -441,6 +450,8 @@ def hex_cartogram(
     ax.set_axis_off()
     if ax is None:
         plt.show()
+
+    return result
 
 
 def subset_regions(
