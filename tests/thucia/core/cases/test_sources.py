@@ -2,8 +2,8 @@ import os
 
 import pandas as pd
 import pytest
-from thucia.core.cases.sources import CaseSource
 from thucia.core.cases.sources import case_registry
+from thucia.core.cases.sources import CaseSource
 from thucia.core.cases.sources import load_case_source
 from thucia.core.cases.sources import load_sources
 from thucia.core.cases.sources.infodengue import InfodengueSource

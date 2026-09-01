@@ -6,9 +6,8 @@
 import types
 
 import pytest
-from docker.errors import DockerException
-
 import thucia.core.containers as C
+from docker.errors import DockerException
 
 
 @pytest.fixture(autouse=True)
@@ -20,9 +19,7 @@ def clear_runtime_cache():
 
 def _no_daemon():
     # docker.from_env() raises DockerException when no daemon is reachable.
-    return lambda *a, **k: (_ for _ in ()).throw(
-        DockerException("unable to connect")
-    )
+    return lambda *a, **k: (_ for _ in ()).throw(DockerException("unable to connect"))
 
 
 class _PodmanUnavailable:
@@ -122,7 +119,9 @@ class _FakeDockerClient:
 def test_run_in_docker_success(monkeypatch):
     container = _FakeContainer(exitcode=0, output=b"hello world")
     client = _FakeDockerClient(container)
-    monkeypatch.setattr(C, "docker", types.SimpleNamespace(from_env=lambda *a, **k: client))
+    monkeypatch.setattr(
+        C, "docker", types.SimpleNamespace(from_env=lambda *a, **k: client)
+    )
     exitcode, output = C.run_in_docker(image="img", command=["true"])
     assert exitcode == 0
     assert output == "hello world"
@@ -132,7 +131,9 @@ def test_run_in_docker_success(monkeypatch):
 def test_run_in_docker_nonzero_exit(monkeypatch):
     container = _FakeContainer(exitcode=1, output=b"oops")
     client = _FakeDockerClient(container)
-    monkeypatch.setattr(C, "docker", types.SimpleNamespace(from_env=lambda *a, **k: client))
+    monkeypatch.setattr(
+        C, "docker", types.SimpleNamespace(from_env=lambda *a, **k: client)
+    )
     exitcode, output = C.run_in_docker(image="img", command=["false"])
     assert exitcode == 1
     assert output == "oops"
@@ -141,7 +142,9 @@ def test_run_in_docker_nonzero_exit(monkeypatch):
 def test_run_in_container_docker_success(monkeypatch):
     container = _FakeContainer(exitcode=0, output=b"hello world")
     client = _FakeDockerClient(container)
-    monkeypatch.setattr(C, "docker", types.SimpleNamespace(from_env=lambda *a, **k: client))
+    monkeypatch.setattr(
+        C, "docker", types.SimpleNamespace(from_env=lambda *a, **k: client)
+    )
     monkeypatch.setattr(C, "get_available_container_runtime", lambda: "docker")
     exitcode, output = C.run_in_container(image="img", command=["true"])
     assert exitcode == 0

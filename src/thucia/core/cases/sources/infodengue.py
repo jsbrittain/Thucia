@@ -17,8 +17,8 @@ from zipfile import ZipFile
 import pandas as pd
 import requests
 
-from . import CaseSource
 from . import case_registry
+from . import CaseSource
 
 #: IBGE municipality codebook (zip), used to resolve municipality names/codes.
 #: See https://www.ibge.gov.br/explica/codigos-dos-municipios.php
@@ -53,7 +53,9 @@ class InfodengueSource(CaseSource):
     ) -> pd.DataFrame:
         """Municipality codebook filtered to `states` (``geocode/state/municipality``)."""
         if iso3.lower() != "bra":
-            raise ValueError(f"Infodengue only covers Brazil municipalities; iso3={iso3!r}")
+            raise ValueError(
+                f"Infodengue only covers Brazil municipalities; iso3={iso3!r}"
+            )
         if not Path(municipalities_path).exists():
             self._download_municipality_codes(municipalities_path)
         df = pd.read_excel(
@@ -82,7 +84,9 @@ class InfodengueSource(CaseSource):
         url = self.params.get("ibge_url", _IBGE_URL)
         response = requests.get(url, timeout=30)
         if response.status_code != 200:
-            raise OSError(f"Error downloading municipality codes: {response.status_code}")
+            raise OSError(
+                f"Error downloading municipality codes: {response.status_code}"
+            )
         with ZipFile(BytesIO(response.content)) as zip_file:
             target = Path(municipalities_path).parent
             zip_file.extractall(target)
@@ -140,7 +144,9 @@ class InfodengueSource(CaseSource):
         df["geocode"] = geocode
         return df
 
-    def _query_states(self, geocodes, disease: str = "dengue", **params) -> pd.DataFrame:
+    def _query_states(
+        self, geocodes, disease: str = "dengue", **params
+    ) -> pd.DataFrame:
         frames = []
         for geocode in geocodes:
             sub = self._query_state(geocode, disease=disease, **params)
@@ -152,13 +158,19 @@ class InfodengueSource(CaseSource):
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
 
-    def attach_admin_info(self, df: pd.DataFrame, geocodes: pd.DataFrame) -> pd.DataFrame:
+    def attach_admin_info(
+        self, df: pd.DataFrame, geocodes: pd.DataFrame
+    ) -> pd.DataFrame:
         """Attach IBGE ``state``/``municipality`` names to queried rows."""
-        out = df.merge(geocodes[["geocode", "state", "municipality"]], on="geocode", how="left")
+        out = df.merge(
+            geocodes[["geocode", "state", "municipality"]], on="geocode", how="left"
+        )
         if out.isnull().values.any():
             import warnings
 
-            warnings.warn("Some geocodes could not be matched with municipality info", UserWarning)
+            warnings.warn(
+                "Some geocodes could not be matched with municipality info", UserWarning
+            )
         return out
 
     # ------------------------------------------------------------------ #
@@ -192,7 +204,9 @@ class InfodengueSource(CaseSource):
             geocodes_df = pd.DataFrame({"geocode": geocode_list})
 
         df = self._query_states(
-            geocode_list, disease=disease, **{k: v for k, v in p.items() if k != "disease"}
+            geocode_list,
+            disease=disease,
+            **{k: v for k, v in p.items() if k != "disease"},
         )
         if df.empty:
             return df
