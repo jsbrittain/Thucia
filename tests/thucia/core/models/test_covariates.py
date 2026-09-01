@@ -99,7 +99,10 @@ def test_lambda_op():
     out = _apply_pipeline_to_group(
         _series([0.0, 1.0, 2.0]), [{"op": "lambda", "func": np.log1p}]
     )
-    assert out.tolist() == [0.0, np.log(2), np.log(3)]
+    vals = out.tolist()
+    assert vals[0] == pytest.approx(0.0)
+    assert vals[1] == pytest.approx(np.log(2))
+    assert vals[2] == pytest.approx(np.log(3))
 
 
 def test_unknown_op_raises():
