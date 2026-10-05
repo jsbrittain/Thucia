@@ -46,9 +46,7 @@ def test_panel_to_frame_from_date_col():
 
 
 def test_panel_to_frame_from_index_col_and_anchor():
-    df = pd.DataFrame(
-        {"week": [1, 2, 3], "g": ["A", "A", "A"], "cases": [1, 2, 3]}
-    )
+    df = pd.DataFrame({"week": [1, 2, 3], "g": ["A", "A", "A"], "cases": [1, 2, 3]})
     out = panel_to_frame(
         df,
         cases_col="cases",
