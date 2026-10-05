@@ -1,12 +1,11 @@
-"""Adapt wide, pre-aggregated case panels to the forecasting pipeline.
-
-``cases_per_period`` covers the line-list path (raw case rows -> period totals +
-covariate merges). This module covers the *panel* path: data that already
-arrives aggregated to one row per (region, period) with covariates attached.
-``panel_to_frame`` maps such a panel onto the schema the pipeline expects
-(``Date``, geo columns, ``Cases``, ``future``); ``read_rds`` loads an R
-data.frame saved as ``.rds``/``.rda`` via the optional ``rdata`` dependency.
-"""
+# Adapt wide, pre-aggregated case panels to the forecasting pipeline.
+#
+# ``cases_per_period`` covers the line-list path (raw case rows -> period totals
+# + covariate merges). This module covers the *panel* path: data that already
+# arrives aggregated to one row per (region, period) with covariates attached.
+# ``panel_to_frame`` maps such a panel onto the schema the pipeline expects
+# (``Date``, geo columns, ``Cases``, ``future``); ``read_rds`` loads an R
+# data.frame saved as ``.rds``/``.rda`` via the optional ``rdata`` dependency.
 from __future__ import annotations
 
 from os import PathLike
