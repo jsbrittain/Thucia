@@ -76,3 +76,40 @@ def make_forecast_df(
 
 
 COVARIATE_COLS = ["tmin", "prec"]
+
+
+def assert_forecast_alignment(
+    out, df, start_date, geo_col="GID_2", require_full_range=True
+):
+    """Assert a forecast frame is aligned to the expected (geo, target Date) rows.
+
+    Checks that:
+    - the output keeps the input cadence (Period dtype/freq);
+    - every geo is forecast for exactly the target periods from ``start_date``
+      to the end of the input history (when ``require_full_range``; models that
+      legitimately trim boundary dates, e.g. movavg, pass ``False``);
+    - no ``(geo, Date, quantile[, horizon])`` key is duplicated;
+    - the observation merged into each prediction (``Cases``) is the one
+      observed at that same ``(geo, Date)`` -- i.e. the vector output was
+      aligned to the correct target step rather than the forecast origin.
+    """
+    assert out["Date"].dtype == df["Date"].dtype
+    expected = set(
+        pd.period_range(start_date, df["Date"].max(), freq=df["Date"].dtype.freq)
+    )
+    assert (out["Date"] >= start_date).all()
+
+    if require_full_range:
+        for gid, group in out.groupby(geo_col, observed=False):
+            assert set(group["Date"]) == expected, f"{gid}: misaligned target dates"
+
+    key = [geo_col, "Date", "quantile"]
+    if "horizon" in out.columns:
+        key.append("horizon")
+    assert not out.duplicated(key).any()
+
+    src = df[["Date", geo_col]].copy()
+    src["_cases_expected"] = df["Cases"].to_numpy()
+    merged = out.merge(src, on=["Date", geo_col], how="left", validate="many_to_one")
+    assert merged["_cases_expected"].notna().all(), "prediction dates not in input"
+    assert np.allclose(merged["Cases"], merged["_cases_expected"]), "Cases misaligned"

@@ -1,13 +1,19 @@
 # Heavy real-model forecast fits. Run with `uv run pytest -m slow` (excluded
 # from the default/CI run via `addopts = "-m 'not slow'"`).
+import importlib
+
 import numpy as np
 import pandas as pd
 import pytest
+from forecast_data import assert_forecast_alignment
 from forecast_data import COVARIATE_COLS
 from forecast_data import make_forecast_df
+from thucia.core.cases.wis import wis_bracher
+from thucia.core.models import chronos
 from thucia.core.models import nbeats
 from thucia.core.models import sarima
 from thucia.core.models import xgboost
+from thucia.core.models.chronos import CHRONOS_QUANTILES
 from thucia.core.quantiles import quantiles
 
 pytestmark = pytest.mark.slow
@@ -116,3 +122,89 @@ def test_sarima_weekly_seasonal():
     assert str(out["Date"].dtype) == "period[W-SAT]"
     assert sorted(out["quantile"].unique()) == quantiles
     assert np.isfinite(out["prediction"]).all()
+
+
+@pytest.mark.network
+def test_chronos_forecast_direct_quantiles(df):
+    # Chronos-2 is zero-shot but downloads a HuggingFace checkpoint; opt-in.
+    start = pd.Period("2020-07", freq="M")
+    out = _as_df(
+        chronos(
+            df,
+            start_date=start,
+            train_start_date=pd.Period("2016-01", freq="M"),
+            train_end_date=pd.Period("2020-06", freq="M"),
+            geo_parent_filter=None,
+            horizons=[1],
+            case_col="Log_Cases",
+            covariate_cols=COVARIATE_COLS,
+            retrain=False,
+            db_file=None,
+            train_col="GID_2",
+        )
+    )
+
+    # Direct quantile parameters on the documented (canonical) subset.
+    assert sorted(out["quantile"].unique()) == sorted(CHRONOS_QUANTILES)
+    assert np.isfinite(out["prediction"]).all()
+    assert (out["prediction"] >= 0).all()
+
+    # Vector outputs are aligned to the target Date, not the forecast origin.
+    assert_forecast_alignment(out, df, start)
+
+    scored = out[out["prediction"].notna()]
+    wis = wis_bracher(
+        scored[["GID_2", "Date", "quantile", "prediction", "Cases"]],
+        group_cols=("GID_2", "Date"),
+    )
+    assert np.isfinite(wis["WIS"]).all()
+
+
+@pytest.mark.network
+def test_chronos_vector_output_alignment():
+    # `last_points_only=True` must keep the *target* step of the horizon vector,
+    # dated at origin + horizon (the timesfm-style alignment).
+    mod = importlib.import_module("thucia.core.models.chronos")
+    df = make_forecast_df(n_periods=60, n_gid=1)
+    horizon = 3
+
+    model = mod.ChronosQuantilesDarts(
+        df=df,
+        case_col="Log_Cases",
+        geo_col="GID_2",
+        geo_parent="GID_1",
+        covariate_cols=COVARIATE_COLS,
+        horizons=[1],
+        train_start_date=pd.Period("2016-01", freq="M"),
+        train_end_date=pd.Period("2020-06", freq="M"),
+        quantiles=CHRONOS_QUANTILES,
+    )
+    model.model = model.build_model(horizon=horizon)
+    model.pre_fit(target_gids=[df["GID_2"].iloc[0]])
+
+    ts, cov, _ = model.get_cases()
+    start = pd.Period("2020-07", freq="M").to_timestamp(how="end")
+    target_aligned = model.historical_forecasts(
+        ts[0], cov[0], start_date=start, retrain=False, horizon=horizon
+    )
+    vectors = model.model.historical_forecasts(
+        series=ts[0],
+        past_covariates=cov[0],
+        forecast_horizon=horizon,
+        start=start,
+        stride=1,
+        retrain=False,
+        last_points_only=False,
+        predict_likelihood_parameters=True,
+        verbose=False,
+    )
+
+    assert target_aligned.time_index.tolist() == [
+        series.time_index[-1] for series in vectors
+    ]
+    target_df = target_aligned.to_dataframe()
+    for series in vectors:
+        assert np.allclose(
+            target_df.loc[series.time_index[-1]].to_numpy(),
+            series.values()[-1].reshape(-1),
+        )

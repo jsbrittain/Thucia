@@ -5,6 +5,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from forecast_data import assert_forecast_alignment
 from forecast_data import COVARIATE_COLS
 from forecast_data import make_forecast_df
 from thucia.core.cases import r2
@@ -49,7 +50,7 @@ def _run(model, df, tmp_path, **extra):
 # (label, model, extra kwargs, assertion flags)
 MODELS = [
     ("baseline", baseline, {"horizon": 1, "num_samples": 50}, {"nan_ok": True}),
-    ("movavg", movavg, {}, {"require_horizon": False}),
+    ("movavg", movavg, {}, {"require_horizon": False, "require_full_range": False}),
     ("sarima_retrain_false", sarima, {"retrain": False, "num_samples": 20}, {}),
     ("sarima_retrain_true", sarima, {"retrain": True, "num_samples": 20}, {}),
     (
@@ -98,7 +99,10 @@ def _assert_valid_forecast(
 @pytest.mark.parametrize("label,model,extra,flags", MODELS, ids=[m[0] for m in MODELS])
 def test_forecast_valid_and_scoreable(label, model, extra, flags, df, tmp_path):
     out = _run(model, df, tmp_path, **extra)
+    flags = dict(flags)
+    require_full_range = flags.pop("require_full_range", True)
     _assert_valid_forecast(out, **flags)
+    assert_forecast_alignment(out, df, START, require_full_range=require_full_range)
     scored = out[out["prediction"].notna()]
     wis = wis_bracher(
         scored[["GID_2", "Date", "quantile", "prediction", "Cases"]],
