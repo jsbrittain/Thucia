@@ -61,29 +61,58 @@ def choropleth(
     vmin=None,
     vmax=None,
     colorbar_format="%.0f",
+    regions=None,
+    geo_col: str | None = None,
+    region_col: str | None = None,
 ):
-    admin_level = _admin_level_col(admin_level)
-    if admin_level == "GID_1":
-        layer = "ADM_ADM_1"
-    elif admin_level == "GID_2":
-        layer = "ADM_ADM_2"
-    else:
-        raise ValueError(f"Unsupported admin_level: {admin_level}")
+    """Colour regions by ``value_col`` aggregated over ``df``.
+
+    By default the regions come from the cached GADM GeoPackage for the country
+    encoded in ``GID_1``/``GID_2`` codes. Pass ``regions`` (a GeoPackage path or
+    an in-memory GeoDataFrame) together with ``geo_col`` (the region-code column
+    in ``df``) and optionally ``region_col`` (the matching key in ``regions``)
+    to map arbitrary geo schemes. Region codes are compared as strings, matching
+    the pipeline's geo-code convention.
+
+    Returns the merged GeoDataFrame that was plotted.
+    """
 
     def passthrough(x):
         return x
 
     value_transform = passthrough if value_transform is None else value_transform
 
-    countries = set(map(lambda x: x.split(".")[0], df[admin_level].unique()))
-    if len(countries) > 1:
-        raise ValueError(f"DataFrame contains multiple countries: {countries}")
-    country = countries.pop()
-    df = df.groupby(admin_level)[value_col].agg(aggregation).reset_index()
+    if regions is not None:
+        if geo_col is None:
+            raise ValueError("geo_col is required when regions= is supplied")
+        region_col = region_col or geo_col
+        gdf = (
+            regions if isinstance(regions, gpd.GeoDataFrame) else gpd.read_file(regions)
+        )
+        gdf = gdf.copy()
+        gdf[region_col] = gdf[region_col].astype(str)
+        df = df.copy()
+        df[geo_col] = df[geo_col].astype(str)
+    else:
+        admin_level = _admin_level_col(admin_level)
+        if admin_level == "GID_1":
+            layer = "ADM_ADM_1"
+        elif admin_level == "GID_2":
+            layer = "ADM_ADM_2"
+        else:
+            raise ValueError(f"Unsupported admin_level: {admin_level}")
+        geo_col = region_col = admin_level
+
+        countries = set(map(lambda x: x.split(".")[0], df[geo_col].unique()))
+        if len(countries) > 1:
+            raise ValueError(f"DataFrame contains multiple countries: {countries}")
+        country = countries.pop()
+        geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
+        gdf = gpd.read_file(geo_filename, layer=layer)
+
+    df = df.groupby(geo_col)[value_col].agg(aggregation).reset_index()
     df[value_col] = value_transform(df[value_col])
-    geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
-    gdf = gpd.read_file(geo_filename, layer=layer)
-    merged = gdf.merge(df, left_on=admin_level, right_on=admin_level, how="right")
+    merged = gdf.merge(df, left_on=region_col, right_on=geo_col, how="right")
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     if symmetric_cmap:
@@ -142,6 +171,8 @@ def choropleth(
 
     if ax is None:
         plt.show()
+
+    return merged
 
 
 def hexmap(

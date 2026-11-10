@@ -197,6 +197,63 @@ def test_choropleth_symmetric_cmap(monkeypatch, tmp_path, geo_gdf):
     matplotlib.pyplot.close(fig)
 
 
+def test_choropleth_custom_regions_in_memory(geo_gdf):
+    import pandas as pd
+
+    regions = geo_gdf.rename(columns={"GID_2": "region_id"}).drop(
+        columns=["GID_0", "GID_1", "NAME_1", "NAME_2"]
+    )
+    df = pd.DataFrame({"district_id": ["X.1.1_2", "X.1.2_2"], "WIS": [0.5, 1.5]})
+    fig, ax = matplotlib.pyplot.subplots()
+    merged = maps.choropleth(
+        df,
+        ax=ax,
+        value_col="WIS",
+        aggregation="mean",
+        regions=regions,
+        geo_col="district_id",
+        region_col="region_id",
+        colorbar_format="%.2f",
+    )
+    matplotlib.pyplot.close(fig)
+
+    assert set(merged["district_id"]) == {"X.1.1_2", "X.1.2_2"}
+    assert sorted(merged["WIS"]) == [0.5, 1.5]
+    assert "geometry" in merged.columns
+
+
+def test_choropleth_custom_regions_from_path(tmp_path, geo_gdf):
+    import pandas as pd
+
+    regions = geo_gdf.rename(columns={"GID_2": "region_id"})
+    path = tmp_path / "regions.gpkg"
+    regions.to_file(path, driver="GPKG")
+
+    df = pd.DataFrame({"district_id": ["X.1.1_2"], "WIS": [0.25]})
+    fig, ax = matplotlib.pyplot.subplots()
+    merged = maps.choropleth(
+        df,
+        ax=ax,
+        value_col="WIS",
+        aggregation="mean",
+        regions=path,
+        geo_col="district_id",
+        region_col="region_id",
+    )
+    matplotlib.pyplot.close(fig)
+
+    assert merged["WIS"].tolist() == [0.25]
+    assert "geometry" in merged.columns
+
+
+def test_choropleth_custom_regions_requires_geo_col(geo_gdf):
+    import pandas as pd
+
+    df = pd.DataFrame({"WIS": [0.5]})
+    with pytest.raises(ValueError, match="geo_col"):
+        maps.choropleth(df, value_col="WIS", regions=geo_gdf)
+
+
 # --- hexmap / hex_cartogram ---
 
 
