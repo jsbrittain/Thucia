@@ -4,7 +4,6 @@ from typing import List
 from typing import Optional
 
 import pandas as pd
-from darts import TimeSeries
 from darts.models import Chronos2Model
 from darts.utils.likelihood_models import QuantileRegression
 from thucia.core.fs import DataFrame
@@ -20,13 +19,8 @@ SPEC = ModelSpec(
     extras=("chronos",),
 )
 
-try:  # Native chronos package (alternative available through Darts)
-    from chronos import Chronos2Pipeline
-except ImportError:
-    Chronos2Pipeline = None
-
-# Chronos (native) supports a fixed subset of quantile levels, so this is a
-# documented subset of the canonical grid in thucia.core.quantiles.
+# Chronos-2 is pre-trained on a fixed quantile grid; this is the intersection
+# with the canonical grid in thucia.core.quantiles (it lacks 0.025 / 0.975).
 CHRONOS_QUANTILES = [
     0.01,
     0.05,
@@ -44,130 +38,37 @@ CHRONOS_QUANTILES = [
 ]
 
 
-# -------- Chronos (native implementation) --------
-class ChronosQuantilesNative(DartsBase):
-    def __init__(self, *args, **kwargs):
-        if not Chronos2Pipeline:
-            raise ImportError(
-                "Chronos package not found. "
-                "Please install Chronos to use ChronosQuantilesNative model."
-            )
-
-        super().__init__(*args, **kwargs)
-        self.sampling_method = "quantiles"
-
-    def build_model(self):
-        return Chronos2Pipeline.from_pretrained(
-            "amazon/chronos-2",
-        )
-
-    def pre_fit(self, target_gids=None, **kwargs):
-        pass
-
-    def historical_forecasts(
-        self, ts, cov, start_date=None, retrain=True, horizon=1, **kwargs
-    ):
-        if not self.multivariate:
-            ts = [ts]
-            cov = [cov]
-
-        output = [[] for _ in range(len(ts))]
-        for gix in range(len(ts)):
-            dates = ts[gix].time_index
-
-            # Convert Darts to pandas DataFrame for Chronos
-            df_ts = ts[gix].to_dataframe()
-            df_cov = cov[gix].to_dataframe()
-            df = df_ts.merge(df_cov, left_index=True, right_index=True)
-
-            for tix, t in enumerate(dates):  # forecast target date at horizon
-                if t < start_date:
-                    continue
-                t_display = pd.Period(t, freq=self.df["Date"].iloc[0].freq)
-
-                logging.info(f"Forecasting for date: {t_display}...")
-                if tix < horizon:
-                    logging.info("Not enough data to forecast, skipping...")
-                    continue
-
-                # Temporal masks
-                input_mask = dates <= dates[tix - horizon]
-                covariate_mask = dates <= t
-
-                context_df = df[input_mask].reset_index()
-                future_df = (
-                    df[covariate_mask]
-                    .reset_index()
-                    .iloc[-horizon:]
-                    .reset_index(drop=True)
-                )
-                future_df = future_df.drop(columns=[self.case_col])
-
-                # Forecast
-                pred_df = self.model.predict_df(
-                    context_df,
-                    future_df=future_df,
-                    prediction_length=horizon,
-                    quantile_levels=self.quantiles,
-                    id_column=f"{self.geo_col}_codes",
-                    timestamp_column="Date",
-                    target="Log_Cases",
-                )
-                # [
-                #   f'{self.geo_col}_codes',
-                #   'Date',
-                #   'target_name', (target column, e.g. Log_Cases)
-                #   'predictions',  (median forecast value, same as '0.5' quantile)
-                #   '0.01', ..., '0.99', (quantiles)
-                # ]
-
-                times = ts[gix].time_index[covariate_mask][-horizon:]
-                forecasts = (
-                    pred_df[map(str, self.quantiles)]
-                    .to_numpy()
-                    .reshape(horizon, 1, len(self.quantiles))
-                )
-                output[gix].append(TimeSeries.from_times_and_values(times, forecasts))
-
-        # output = [time]series[horizon][1][samples]
-        if self.multivariate:
-            return output
-        else:
-            if len(output) > 1:
-                raise ValueError("Multiple GIDs processed, but multivariate=False.")
-            return output[0]  # limit to one GID for now (extend this later)
-
-
 # -------- Chronos (DARTS implementation) --------
 class ChronosQuantilesDarts(DartsBase):
     def __init__(self, *args, **kwargs):
         # Model parameters
         self.input_chunk_length = 48  # how many past steps the model can see
-        self.output_chunk_length = 1  # how many future steps the model predicts at once
-        # Initialize model
         super().__init__(*args, **kwargs)
-        self.sampling_method = "samples"
+        # Chronos-2 predicts quantiles directly (zero-shot, no sampling);
+        # DartsBase parses them from the ``*_q<level>`` components returned by
+        # historical_forecasts.
+        self.sampling_method = "quantiles"
 
-    def build_model(self):
+    def build_model(self, horizon):
         return Chronos2Model(
             input_chunk_length=self.input_chunk_length,
-            output_chunk_length=self.output_chunk_length,
+            output_chunk_length=horizon,
             likelihood=QuantileRegression(quantiles=self.quantiles),
         )
 
     def pre_fit(self, target_gids=None, **kwargs):
         logging.info(
-            "Fitting Chronos-2 model on historical data "
+            "Preparing Chronos-2 model on historical data "
             f"({self.train_start_date} to {self.train_end_date})..."
         )
-        # Train on historical data only
+        # ``fit`` with darts' default ``epochs=0`` only registers the training
+        # series/covariates; Chronos-2 stays a pre-trained (zero-shot) model.
         target_list, covar_list, _ = self.get_cases(
             future=False,
             target_gids=target_gids,
             start_date=self.train_start_date,
             end_date=self.train_end_date,
         )
-        # Fit
         self.model.fit(
             series=target_list,
             past_covariates=covar_list,
@@ -181,18 +82,21 @@ class ChronosQuantilesDarts(DartsBase):
             "Generating Chronos-2 historical forecasts "
             f"from {start_date} with retrain={retrain}..."
         )
-        bt = self.model.historical_forecasts(
+        # ``last_points_only=True`` returns the target step of each horizon
+        # vector (Date = origin + horizon), matching the other darts models.
+        # ``predict_likelihood_parameters=True`` yields the requested quantile
+        # levels directly, rather than drawing (and then collapsing) samples.
+        return self.model.historical_forecasts(
             series=ts,
             past_covariates=cov,
             forecast_horizon=horizon,
             start=start_date,
             stride=1,
             retrain=retrain,
-            last_points_only=False,  # this changes the output format
+            last_points_only=True,
+            predict_likelihood_parameters=True,
             verbose=False,
-            num_samples=self.num_samples,
         )
-        return bt
 
 
 # -------- pipeline helper --------
@@ -219,38 +123,22 @@ def chronos(
     """
     logging.info("Starting Chronos forecasting pipeline...")
 
-    # Instantiate model
-    if train_col is None and Chronos2Pipeline is not None:
-        # Using native Chronos implementation (fast, but only supports whole-dataset fit)
-        model = ChronosQuantilesNative(
-            df=df,
-            case_col=case_col,
-            geo_col=geo_col,
-            geo_parent=geo_parent,
-            covariate_cols=covariate_cols,
-            horizons=horizons,
-            db_file=db_file,
-            train_start_date=train_start_date,
-            train_end_date=train_end_date,
-            multivariate=False,
-        )
-    else:
-        # Using Darts implementation of Chronos (can be surprisingly slow, due to
-        # training, but supports per-region and whole-dataset training)
-        model = ChronosQuantilesDarts(
-            df=df,
-            case_col=case_col,
-            geo_col=geo_col,
-            geo_parent=geo_parent,
-            covariate_cols=covariate_cols,
-            horizons=horizons,
-            db_file=db_file,
-            train_start_date=train_start_date,
-            train_end_date=train_end_date,
-            multivariate=multivariate,
-            # DARTS quantiles must be a subset of Chronos native quantiles
-            quantiles=CHRONOS_QUANTILES,
-        )
+    # Chronos-2 is a pre-trained foundation model; the darts wrapper runs it
+    # zero-shot and returns quantiles directly (no sampling), while still
+    # supporting per-region and whole-dataset training via ``train_col``.
+    model = ChronosQuantilesDarts(
+        df=df,
+        case_col=case_col,
+        geo_col=geo_col,
+        geo_parent=geo_parent,
+        covariate_cols=covariate_cols,
+        horizons=horizons,
+        db_file=db_file,
+        train_start_date=train_start_date,
+        train_end_date=train_end_date,
+        multivariate=multivariate,
+        quantiles=CHRONOS_QUANTILES,
+    )
 
     # Historical predictions
     tdf = model.historical_predictions(
