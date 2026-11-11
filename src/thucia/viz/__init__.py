@@ -7,6 +7,9 @@ import numpy as np
 import pandas as pd
 from thucia.core.geo import get_admin2_list
 
+from .scores import aggregate_scores  # noqa: F401
+from .scores import plot_scores  # noqa: F401
+
 
 def plot_all_admin2(
     df_baseline: pd.DataFrame,
