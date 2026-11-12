@@ -78,6 +78,29 @@ tdf.columns             # ['Date', 'state', 'region', 'Cases']
 Pass `migrate=True` (DuckDB only) to physically rename the stored columns; for
 NetCDF/Zarr the aliasing is applied to the pandas frame on read.
 
+## Run metadata (provenance)
+
+Fitted artefacts record how they were produced. A model fitted through
+`fit_model` writes a `__run_metadata__` table (DuckDB) or a JSON Dataset
+attribute (NetCDF/Zarr) holding four documents: `selection` (model, label,
+overrides, params), `config` (the effective `PipelineConfig`, including the
+regions map as a path or frame description), `inputs` (shape plus a structural
+digest of the observed rows) and `environment` (thucia/python versions, git
+commit, timestamp).
+
+```python
+from thucia.core import read_run_metadata, read_db
+
+docs = read_run_metadata("my_run/sarima52_cases_quantiles.duckdb")
+docs["selection"]["overrides"]     # {'retrain': True, 'season_length': 52}
+read_db("my_run/sarima52_cases_quantiles.duckdb").metadata == docs
+```
+
+The metadata is written by `write_db(..., metadata={...})` when an artefact is
+created, or `DataFrame.set_metadata(docs)` for a file produced by something
+else. It is preserved on `append` (never clobbered by more rows), replaced on a
+full rewrite, and absent-from-old-file reads simply return `{}`.
+
 ## NetCDF / Zarr
 
 NetCDF and Zarr are convenient for sharing ready-to-use datasets, and they

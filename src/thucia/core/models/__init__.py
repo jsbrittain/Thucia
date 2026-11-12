@@ -7,6 +7,7 @@ import sys
 import types
 from pathlib import Path
 from typing import Any
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
@@ -14,6 +15,9 @@ from thucia.core.cases import write_db
 from thucia.core.fs import DataFrame
 from thucia.core.geo import convert_to_incidence_rate  # noqa: F401
 
+from ._meta import as_selection  # noqa: F401
+from ._meta import ModelSelection  # noqa: F401
+from ._meta import ModelSpec  # noqa: F401
 from .utils import samples_to_quantiles
 
 # from .utils import filter_admin1  # noqa: F401
@@ -96,8 +100,6 @@ def get_model_spec(name: str):
     A conservative default is returned for any advertised model that does not
     (yet) declare a `SPEC`, so ad-hoc models never break the pipeline.
     """
-    from ._meta import ModelSpec
-
     if name not in _exports:
         raise ValueError(f"Unknown model '{name}'. Available models: {list_models()}")
     mod = importlib.import_module(f".{name}", __name__)
@@ -116,6 +118,7 @@ def run_model(
     save_quantiles=True,
     model_args=None,
     model_kwargs=None,
+    metadata: Mapping[str, Any] | None = None,
 ):
     # Cases
     tic = pd.Timestamp.now()
@@ -138,7 +141,7 @@ def run_model(
     # Save samples
     if save_samples and isinstance(df_model, pd.DataFrame):
         if "sample" not in df_model.columns:
-            write_db(df_model, path / f"{name}_cases_samples")
+            write_db(df_model, path / f"{name}_cases_samples", metadata=metadata)
         else:
             logging.warning(
                 f"Model {name} did not produce samples, saving quantiles instead."
@@ -165,7 +168,7 @@ def run_model(
     # Save quantiles
     if save_quantiles and not isinstance(df_model, DataFrame):
         if "quantile" in df_model.columns:
-            write_db(df_model, path / f"{name}_cases_quantiles")
+            write_db(df_model, path / f"{name}_cases_quantiles", metadata=metadata)
         else:
             logging.warning(
                 f"Model {name} did not produce quantiles, cannot save quantiles."

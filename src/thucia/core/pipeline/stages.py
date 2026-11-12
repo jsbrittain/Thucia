@@ -7,8 +7,11 @@
 # in isolation and reused.
 from __future__ import annotations
 
+import dataclasses
+import warnings
 from pathlib import Path
 from typing import Any
+from typing import Iterable
 from typing import Optional
 
 import numpy as np
@@ -28,12 +31,32 @@ from thucia.core.geo import ensure_all_regions
 from thucia.core.geo import merge_sources
 from thucia.core.models import get_model
 from thucia.core.models import run_model
+from thucia.core.models._meta import as_selection
+from thucia.core.models._meta import ModelSelection
+from thucia.core.models._meta import ModelSpec
+from thucia.core.models._meta import validate_model_params
 from thucia.core.models.ensemble import create_ensemble
 from thucia.core.models.utils import sanitise_covariates
 from thucia.core.models.utils.adapter import residual_regression
 from thucia.core.models.utils.covariates import build_features
 
 from .config import PipelineConfig
+from .provenance import run_metadata_docs
+
+#: Config knobs `fit_model` always forwards to the model callable (as opposed
+#: to the per-model knobs a `ModelSpec` declares support for).
+_ALWAYS_PASSED = frozenset(
+    {
+        "adm1",
+        "case_col",
+        "geo_col",
+        "geo_parent",
+        "horizons",
+        "path",
+        "start_date",
+        "train_col",
+    }
+)
 
 
 def base_columns(config: PipelineConfig) -> tuple[str, ...]:
@@ -195,52 +218,147 @@ def prepare_model_inputs(
     return out, covariate_cols
 
 
+def _resolve_overrides(
+    selection: ModelSelection,
+    config: PipelineConfig,
+    spec: ModelSpec,
+) -> PipelineConfig:
+    """Validate and apply a selection's per-model config overrides.
+
+    Overrides must name real ``PipelineConfig`` fields. A field the selected
+    model never consumes (neither always forwarded nor declared by its
+    ``ModelSpec``) is kept, but warned about, since it would otherwise be a
+    silent no-op.
+    """
+    if not selection.overrides:
+        return config
+    fields = {f.name for f in dataclasses.fields(PipelineConfig)}
+    unknown = set(selection.overrides) - fields
+    if unknown:
+        raise ValueError(
+            f"{selection.run_label}: unknown config overrides {sorted(unknown)}; "
+            "use PipelineConfig field names."
+        )
+    unused = set(selection.overrides) - _ALWAYS_PASSED - set(spec.supports)
+    if unused:
+        warnings.warn(
+            f"{selection.run_label}: override(s) {sorted(unused)} are not used by "
+            f"model '{selection.name}' (declared: {sorted(spec.supports)}); "
+            "they are applied to the config but not passed to the model.",
+            UserWarning,
+            stacklevel=3,
+        )
+    return dataclasses.replace(config, **selection.overrides)
+
+
 def fit_model(
     df: pd.DataFrame,
-    model_name: str,
+    model: str | ModelSelection,
     config: PipelineConfig,
     *,
     db_file: str | Path | None = None,
 ) -> Any:
-    """Fit a named model on prepared inputs and return the quantile frame."""
-    model = get_model(model_name)
+    """Fit a model on prepared inputs and return the quantile frame.
 
-    base_cols = set(base_columns(config)) | {config.case_col}
+    ``model`` is either an advertised model name or a
+    :class:`~thucia.core.models._meta.ModelSelection` carrying a label and
+    per-model configuration. The label names the output DuckDB file and the
+    run metadata recorded in it.
+    """
+    selection = as_selection(model)
+    label = selection.run_label
+    model_fn = get_model(selection.name)
+    validate_model_params(selection, model_fn)
+    spec = models.get_model_spec(selection.name)
+    cfg = _resolve_overrides(selection, config, spec)
+
+    base_cols = set(base_columns(cfg)) | {cfg.case_col}
     covariate_cols = [c for c in df.columns if c not in base_cols]
-    db_file = db_file or config.path / f"{model_name}_cases_quantiles.duckdb"
+    db_file = db_file or cfg.path / f"{label}_cases_quantiles.duckdb"
 
     model_kwargs: dict[str, Any] = {
-        "start_date": config.start_date,
-        "geo_col": config.geo_col,
-        "geo_parent": config.geo_parent,
-        "geo_parent_filter": config.adm1,
-        "horizons": config.horizons,
-        "case_col": config.case_col,
+        "start_date": cfg.start_date,
+        "geo_col": cfg.geo_col,
+        "geo_parent": cfg.geo_parent,
+        "geo_parent_filter": cfg.adm1,
+        "horizons": cfg.horizons,
+        "case_col": cfg.case_col,
         "covariate_cols": covariate_cols,
-        "train_col": config.train_col or config.geo_col,
+        "train_col": cfg.train_col or cfg.geo_col,
         "db_file": db_file,
     }
     # Each model declares, via its ModelSpec, which extra config knobs it
     # accepts (beyond the common ones above). Map supported knobs to their
     # PipelineConfig values instead of special-casing model names.
-    spec = models.get_model_spec(model_name)
     knob_value = {
-        "train_end_date": config.train_end_date,
-        "retrain": config.retrain,
-        "multivariate": config.multivariate,
-        "samples": config.num_samples,
-        "season_length": config.season_length,
-        "quantiles": config.quantiles,
-        "median_only": config.median_only,
-        "past_covariate_cols": config.past_covariate_cols,
-        "future_covariate_cols": config.future_covariate_cols,
+        "train_end_date": cfg.train_end_date,
+        "retrain": cfg.retrain,
+        "multivariate": cfg.multivariate,
+        "samples": cfg.num_samples,
+        "season_length": cfg.season_length,
+        "quantiles": cfg.quantiles,
+        "median_only": cfg.median_only,
+        "past_covariate_cols": cfg.past_covariate_cols,
+        "future_covariate_cols": cfg.future_covariate_cols,
     }
     kwarg_name = {"samples": "num_samples"}  # others are identical to knob names
     for knob, value in knob_value.items():
         if knob in spec.supports:
             model_kwargs[kwarg_name.get(knob, knob)] = value
+    # Per-run params win over the config projection (validated above).
+    model_kwargs.update(selection.params)
 
-    return run_model(model_name, model, df, config.path, model_kwargs=model_kwargs)
+    docs = run_metadata_docs(selection, cfg, df)
+    frame = run_model(
+        label,
+        model_fn,
+        df,
+        cfg.path,
+        model_kwargs=model_kwargs,
+        metadata=docs,
+    )
+    if isinstance(frame, DataFrame):
+        # Models that persist their own output (e.g. `baseline` with a
+        # `db_file`) never reach `run_model`'s write path, so record the run
+        # metadata on the file they produced.
+        _attach_metadata(db_file, docs)
+    return frame
+
+
+def _attach_metadata(db_file: str | Path, docs: dict[str, Any]) -> None:
+    """Record run metadata on an artefact a model wrote itself."""
+    path = Path(db_file)
+    if path.suffix not in ("", ".duckdb") or not path.exists():
+        return
+    DataFrame(db_path=str(path)).set_metadata(docs)
+
+
+def fit_models(
+    df: pd.DataFrame,
+    selections: Iterable[str | ModelSelection],
+    config: PipelineConfig,
+) -> dict[str, pd.DataFrame]:
+    """Fit several models (or model variants) on the same prepared inputs.
+
+    Returns ``{label: quantile frame}``, so one prepared frame and one set of
+    assumptions can drive a whole model comparison. Labels must be unique —
+    two variants of the same model need distinct labels (otherwise they would
+    share an output file and be indistinguishable in score rows).
+    """
+    normalised = [as_selection(s) for s in selections]
+    labels = [s.run_label for s in normalised]
+    duplicates = sorted({lb for lb in labels if labels.count(lb) > 1})
+    if duplicates:
+        raise ValueError(
+            f"duplicate model labels {duplicates}; give each variant a distinct "
+            "ModelSelection(label=...)."
+        )
+
+    fitted: dict[str, pd.DataFrame] = {}
+    for selection in normalised:
+        frame = fit_model(df, selection, config)
+        fitted[selection.run_label] = frame.df if hasattr(frame, "df") else frame
+    return fitted
 
 
 def score_model(

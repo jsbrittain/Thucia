@@ -21,6 +21,7 @@ a thin, data-in/data-out function configured by
 .. autofunction:: thucia.core.pipeline.merge_covariates
 .. autofunction:: thucia.core.pipeline.prepare_model_inputs
 .. autofunction:: thucia.core.pipeline.fit_model
+.. autofunction:: thucia.core.pipeline.fit_models
 .. autofunction:: thucia.core.pipeline.score_model
 .. autofunction:: thucia.core.pipeline.aggregate_quantiles
 .. autofunction:: thucia.core.pipeline.build_ensemble
@@ -35,6 +36,8 @@ a thin, data-in/data-out function configured by
 .. autofunction:: thucia.core.models.get_model_spec
 .. autofunction:: thucia.core.models.run_model
 .. autoclass:: thucia.core.models._meta.ModelSpec
+   :members:
+.. autoclass:: thucia.core.models._meta.ModelSelection
    :members:
 ```
 
@@ -60,6 +63,7 @@ a thin, data-in/data-out function configured by
 .. autofunction:: thucia.core.cases.write_db
 .. autofunction:: thucia.core.cases.read_nc
 .. autofunction:: thucia.core.cases.write_nc
+.. autofunction:: thucia.core.fs.read_run_metadata
 ```
 
 ## PDFM embeddings
