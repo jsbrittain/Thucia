@@ -8,7 +8,7 @@ Thucia is a disease-forecasting library (arboviral: dengue, Zika, chikungunya) f
 - Tests: `uv run pytest` (CI uses `uv run pytest --cov=thucia --cov-report=term --cov-report=html`). Heavy real-model fits are excluded by default (`addopts = "-m 'not slow'"`); run them explicitly with `uv run pytest -m slow` (CI runs `-m "slow and not network"` — the timesfm checkpoint test is marked `network`). Run `uv run pytest tests/thucia/core/models/test_wis.py::test_perfect_forecast_zero_wis` for a single test. `addopts` also loads `-p thucia_pytest_bootstrap` (see below) so `--cov=<pkg>` works locally.
 - Lint/format: `pre-commit` runs `ruff`, `ruff-format`, and `reorder-python-imports` (import ordering is NOT isort/black style). Run `pre-commit run --all-files`.
 - Docs are Sphinx (`docs/`), built on ReadTheDocs from `docs/requirements.txt` (myst-parser, sphinx-book-theme).
-- CLI: `thucia <command>` (dashboard, cases-per-month, cases-per-week, cases-per-day, plot-*). `thucia dashboard` launches the Streamlit app.
+- CLI: `thucia <command>` (dashboard, cases-per-month, cases-per-week, cases-per-day, plot-*, provenance). `thucia dashboard` launches the Streamlit app; `thucia provenance <file> [--document X] [--verify] [--include-deps]` prints or verifies the run metadata recorded in a saved artefact (the step lives in `cli/steps.py::provenance` and imports `core.pipeline.provenance` lazily, so `import thucia` stays free of the model stack).
 
 ## Architecture
 

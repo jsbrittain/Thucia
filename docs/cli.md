@@ -18,6 +18,7 @@ $ thucia --help
 | `thucia plot-cases-per-month` | Plot monthly case counts.                        |
 | `thucia plot-cases-per-week`  | Plot weekly case counts.                         |
 | `thucia plot-cases-per-day`   | Plot daily case counts.                          |
+| `thucia provenance <file>`    | Show or verify the run metadata in a saved artefact. |
 
 ## The dashboard
 
@@ -64,6 +65,41 @@ $ thucia cases-per-month \
 The `plot-cases-per-*` commands additionally accept `--title`, `--date-col`
 (column of dates, default `"Date"`), and `--cases-col`. They read the matching
 `cases-per-*` output and display a line plot.
+
+## Inspecting run metadata
+
+Every artefact written by `fit_model`/`fit_models` records how it was produced
+(see {doc}`data-layer`). `thucia provenance` reads it back without Python:
+
+```console
+$ thucia provenance out/baseline_cases_quantiles.duckdb
+$ thucia provenance out/baseline_cases_quantiles.duckdb --document selection
+$ thucia provenance out/baseline_cases_quantiles.duckdb --verify --include-deps
+```
+
+```{list-table}
+:header-rows: 1
+:widths: 24 76
+
+* - Option
+  - Meaning
+* - `<file>`
+  - Artefact to inspect (`.duckdb`, `.nc` or `.zarr`). Required.
+* - `--document <name>`
+  - Print only that document: `selection`, `config`, `code`, `inputs` or
+    `environment`. Default: all documents.
+* - `--json`
+  - Emit compact single-line JSON (for piping) instead of indented JSON.
+* - `--verify`
+  - Compare the recorded `code` document with the implementation running now;
+    exits `1` when they differ (mismatched fields go to stderr).
+* - `--include-deps`
+  - With `--verify`, also compare the numerics-stack versions
+    (`darts`/`torch`/`statsmodels`/`numpy`/`pandas`/`duckdb`).
+```
+
+Exit codes: `0` success (including a matching `--verify`), `1` no metadata
+recorded / implementation mismatch, `2` unknown `--document`.
 
 ## Projects
 
