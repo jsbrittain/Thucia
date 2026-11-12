@@ -77,10 +77,11 @@ def test_label_names_artifacts_and_records_provenance(tmp_path):
     assert saved.exists()
 
     docs = read_run_metadata(saved)
-    assert set(docs) == {"selection", "config", "environment", "inputs"}
+    assert set(docs) == {"selection", "config", "code", "environment", "inputs"}
     assert docs["selection"]["name"] == "baseline"
     assert docs["selection"]["label"] == "baseline_v2"
     assert docs["config"]["horizons"] == [1]
+    assert docs["code"]["digest"].startswith("sha256:")
     assert docs["inputs"]["geo_units"] == 2
     assert docs["inputs"]["digest"]
 

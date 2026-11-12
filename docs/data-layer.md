@@ -82,11 +82,11 @@ NetCDF/Zarr the aliasing is applied to the pandas frame on read.
 
 Fitted artefacts record how they were produced. A model fitted through
 `fit_model` writes a `__run_metadata__` table (DuckDB) or a JSON Dataset
-attribute (NetCDF/Zarr) holding four documents: `selection` (model, label,
+attribute (NetCDF/Zarr) holding five documents: `selection` (model, label,
 overrides, params), `config` (the effective `PipelineConfig`, including the
-regions map as a path or frame description), `inputs` (shape plus a structural
-digest of the observed rows) and `environment` (thucia/python versions, git
-commit, timestamp).
+regions map as a path or frame description), `code` (the Thucia implementation
+that ran — see below), `inputs` (shape plus a structural digest of the observed
+rows) and `environment` (python version, platform, timestamp).
 
 ```python
 from thucia.core import read_run_metadata, read_db
@@ -100,6 +100,54 @@ The metadata is written by `write_db(..., metadata={...})` when an artefact is
 created, or `DataFrame.set_metadata(docs)` for a file produced by something
 else. It is preserved on `append` (never clobbered by more rows), replaced on a
 full rewrite, and absent-from-old-file reads simply return `{}`.
+
+### Pinning the implementation
+
+`code` identifies the code that produced the artefact, so "same model, same
+data, same assumptions" can be checked rather than assumed:
+
+```python
+{
+  "source": "editable",          # editable | git | index | local | archive | source
+  "distribution": {"name": "Thucia", "version": "0.1.dev135+g7d41bf06d.d20261112"},
+  "commit": {"id": "2fb8b62…", "short": "2fb8b62", "describe": "2fb8b62", "dirty": true},
+  "direct_url": {"url": "file:///…/Thucia", "dir_info": {"editable": true}},
+  "digest": "sha256:e282c7de…",  # content fingerprint of the imported package
+  "digest_basis": "sources",     # "sources" (directory walk) or "record" (wheel RECORD)
+  "deps": {"darts": "0.48.1", "torch": "2.10.0", "numpy": "2.3.5", …}
+}
+```
+
+The **digest** is the pin that works everywhere: a sha256 over the package's
+`*.py` sources (path-tagged, sorted, `__pycache__` and a setuptools-scm
+generated `_version.py` excluded), so it identifies the code actually imported
+even for a dirty editable checkout — and it needs no git repository, so it
+survives a published wheel. `distribution.version` is build-time metadata and
+goes stale for editable installs, so prefer the digest.
+
+`commit` is populated **only** when the running package *is* a checked-out
+source tree (`<repo>/src/thucia` or `<repo>/thucia`); a wheel installed into a
+project's own `.venv` deliberately does not inherit the surrounding
+repository's commit, and `dirty` is `null` rather than `false` when it cannot be
+observed.
+
+```python
+from thucia.core import code_document, verify_code_identity
+
+code_document()["digest"]
+verify_code_identity(read_run_metadata("my_run/forecast.duckdb"))  # {} == identical
+```
+
+`fit_model`/`fit_models` accept pins and refuse to fit when they are not met:
+
+```python
+fit_model(df, "baseline", config, expect="my_run/baseline_cases_quantiles.duckdb")
+fit_model(df, "baseline", config, expect_commit="2fb8b62")   # clean tree required
+fit_model(df, "baseline", config, expect_version="0.2.0")    # registry installs
+```
+
+`expect_commit` raises for an install that carries no commit (a wheel) rather
+than passing silently — pin those by version or by an artefact's digest.
 
 ## NetCDF / Zarr
 

@@ -12,6 +12,7 @@ import warnings
 from pathlib import Path
 from typing import Any
 from typing import Iterable
+from typing import Mapping
 from typing import Optional
 
 import numpy as np
@@ -41,6 +42,7 @@ from thucia.core.models.utils.adapter import residual_regression
 from thucia.core.models.utils.covariates import build_features
 
 from .config import PipelineConfig
+from .provenance import check_expected_code
 from .provenance import run_metadata_docs
 
 #: Config knobs `fit_model` always forwards to the model callable (as opposed
@@ -257,6 +259,9 @@ def fit_model(
     config: PipelineConfig,
     *,
     db_file: str | Path | None = None,
+    expect: str | Path | Mapping[str, Any] | None = None,
+    expect_commit: str | None = None,
+    expect_version: str | None = None,
 ) -> Any:
     """Fit a model on prepared inputs and return the quantile frame.
 
@@ -264,8 +269,16 @@ def fit_model(
     :class:`~thucia.core.models._meta.ModelSelection` carrying a label and
     per-model configuration. The label names the output DuckDB file and the
     run metadata recorded in it.
+
+    ``expect`` / ``expect_commit`` / ``expect_version`` pin the *implementation*:
+    the fit is refused when the running Thucia is not the one that produced
+    ``expect`` (a saved artefact or its metadata), is not at ``expect_commit``
+    (source installs only, clean tree required), or is not ``expect_version``.
     """
     selection = as_selection(model)
+    check_expected_code(
+        expect=expect, expect_commit=expect_commit, expect_version=expect_version
+    )
     label = selection.run_label
     model_fn = get_model(selection.name)
     validate_model_params(selection, model_fn)
@@ -337,13 +350,18 @@ def fit_models(
     df: pd.DataFrame,
     selections: Iterable[str | ModelSelection],
     config: PipelineConfig,
+    *,
+    expect: str | Path | Mapping[str, Any] | None = None,
+    expect_commit: str | None = None,
+    expect_version: str | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Fit several models (or model variants) on the same prepared inputs.
 
     Returns ``{label: quantile frame}``, so one prepared frame and one set of
     assumptions can drive a whole model comparison. Labels must be unique —
     two variants of the same model need distinct labels (otherwise they would
-    share an output file and be indistinguishable in score rows).
+    share an output file and be indistinguishable in score rows). The
+    ``expect*`` pins are checked once, before any model is fitted.
     """
     normalised = [as_selection(s) for s in selections]
     labels = [s.run_label for s in normalised]
@@ -353,6 +371,10 @@ def fit_models(
             f"duplicate model labels {duplicates}; give each variant a distinct "
             "ModelSelection(label=...)."
         )
+
+    check_expected_code(
+        expect=expect, expect_commit=expect_commit, expect_version=expect_version
+    )
 
     fitted: dict[str, pd.DataFrame] = {}
     for selection in normalised:

@@ -27,6 +27,32 @@ Verify the installation:
 $ thucia --help
 ```
 
+## Pinning a version
+
+Thucia is not yet published to a package index, so pin it to a git revision.
+With uv:
+
+```toml
+# pyproject.toml
+[tool.uv.sources]
+thucia = { git = "ssh://git@github.com/kraemer-lab/Thucia", rev = "<commit-sha>" }
+```
+
+or with pip:
+
+```console
+$ pip install "thucia @ git+https://github.com/kraemer-lab/Thucia@<commit-sha>"
+```
+
+`uv.lock` records the resolved commit, so the environment is reproducible. Once
+the package is published, `thucia==<version>` (with `--require-hashes`) becomes
+the pin for index installs.
+
+Whatever the install method, a fitted artefact records the implementation that
+produced it (see {doc}`data-layer`): a **content digest** of the package that
+works for editable checkouts, git installs and wheels alike, plus the commit
+when — and only when — the running package really is a git checkout.
+
 ## Install extras
 
 Thucia's dependency surface is large (deep-learning backends, a dashboard,
