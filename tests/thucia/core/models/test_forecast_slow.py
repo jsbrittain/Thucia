@@ -14,6 +14,7 @@ from thucia.core.models import nbeats
 from thucia.core.models import sarima
 from thucia.core.models import xgboost
 from thucia.core.models.chronos import CHRONOS_QUANTILES
+from thucia.core.models.darts.foundation import TIMESFM_QUANTILES
 from thucia.core.quantiles import quantiles
 
 pytestmark = pytest.mark.slow
@@ -78,15 +79,16 @@ def test_xgboost_multihorizon():
 
 
 @pytest.mark.network
-def test_timesfm_forecast_requires_torch_and_network(df):
-    # TimesFM downloads a HuggingFace checkpoint; opt-in only.
+def test_timesfm3_forecast_requires_torch_licence_and_network(df):
+    # TimesFM 3.0 downloads a HuggingFace checkpoint and needs the
+    # non-commercial licence acknowledged; opt-in only.
     pytest.importorskip("torch")
     try:
-        from thucia.core.models import timesfm
+        from thucia.core.models import timesfm3
     except Exception as exc:  # pragma: no cover
-        pytest.skip(f"timesfm unavailable: {exc}")
+        pytest.skip(f"timesfm3 unavailable: {exc}")
     out = _as_df(
-        timesfm(
+        timesfm3(
             df,
             start_date=pd.Period("2020-07", freq="M"),
             geo_parent_filter=None,
@@ -95,8 +97,46 @@ def test_timesfm_forecast_requires_torch_and_network(df):
             covariate_cols=COVARIATE_COLS,
             retrain=False,
             db_file=None,
+            accept_license=True,
         )
     )
+    # Native pre-trained grid, ordered, and scoreable.
+    assert sorted(out["quantile"].unique()) == sorted(TIMESFM_QUANTILES)
+    assert np.isfinite(out["prediction"]).all()
+    med = out[out["quantile"] == 0.5].set_index(["GID_2", "Date"])["prediction"]
+    wide = out.pivot_table(
+        index=["GID_2", "Date"],
+        columns="quantile",
+        values="prediction",
+        observed=True,
+    )
+    assert (wide.diff(axis=1).iloc[:, 1:] >= -1e-6).all().all()
+    assert np.isfinite(med).all()
+
+
+@pytest.mark.network
+def test_timesfm25_forecast_ignores_covariates(df):
+    # TimesFM 2.5 takes no covariates: they are dropped with a warning, and the
+    # forecast still covers the 9-level pre-trained grid.
+    pytest.importorskip("torch")
+    try:
+        from thucia.core.models import timesfm25
+    except Exception as exc:  # pragma: no cover
+        pytest.skip(f"timesfm25 unavailable: {exc}")
+    with pytest.warns(UserWarning, match="does not support covariates"):
+        out = _as_df(
+            timesfm25(
+                df,
+                start_date=pd.Period("2020-07", freq="M"),
+                geo_parent_filter=None,
+                horizons=[1],
+                case_col="Log_Cases",
+                covariate_cols=COVARIATE_COLS,
+                retrain=False,
+                db_file=None,
+            )
+        )
+    assert sorted(out["quantile"].unique()) == sorted(TIMESFM_QUANTILES)
     assert np.isfinite(out["prediction"]).all()
 
 
@@ -158,6 +198,27 @@ def test_chronos_forecast_direct_quantiles(df):
         group_cols=("GID_2", "Date"),
     )
     assert np.isfinite(wis["WIS"]).all()
+
+
+@pytest.mark.network
+def test_chronos_quantile_subset_and_median_only(df):
+    # Requesting a subset of the pre-trained grid keeps exactly those levels,
+    # and median_only switches to a deterministic single-level forecast.
+    common = dict(
+        start_date=pd.Period("2020-07", freq="M"),
+        geo_parent_filter=None,
+        horizons=[1],
+        case_col="Log_Cases",
+        covariate_cols=COVARIATE_COLS,
+        retrain=False,
+        db_file=None,
+    )
+    subset = _as_df(chronos(df, quantiles=[0.05, 0.5, 0.95], **common))
+    assert sorted(subset["quantile"].unique()) == [0.05, 0.5, 0.95]
+
+    median = _as_df(chronos(df, median_only=True, **common))
+    assert sorted(median["quantile"].unique()) == [0.5]
+    assert np.isfinite(median["prediction"]).all()
 
 
 @pytest.mark.network

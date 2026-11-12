@@ -82,6 +82,18 @@ class PipelineConfig:
     # SARIMA seasonal period; None auto-detects from the data frequency
     # (monthly -> 12, weekly -> 52, daily -> 365).
     season_length: Optional[int] = None
+    # Quantile levels to request from fixed-grid models (chronos, timesfm25,
+    # timesfm3). None uses the model's full pre-trained grid; any subset of that
+    # grid is accepted and anything else raises. `median_only` asks for a
+    # deterministic median (a single 0.5 component) instead.
+    quantiles: Optional[list[float]] = None
+    median_only: bool = False
+    # Covariate routing for models that can see covariates: every covariate is
+    # passed to the past slot unless `past_covariate_cols` names a subset;
+    # `future_covariate_cols` (a list, or "all") additionally passes covariates
+    # to the future slot (known over the forecast window, e.g. climate).
+    past_covariate_cols: Optional[list[str]] = None
+    future_covariate_cols: Optional[list[str] | str] = None
 
     # Model-input preparation: optional lag/roll feature recipe for
     # `build_features` (see thucia.core.models.utils.covariates). When None,

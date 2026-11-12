@@ -472,6 +472,39 @@ def _residual_regression_fit_and_apply(
     return df_out
 
 
+def enforce_monotone_quantiles(
+    df: pd.DataFrame, geo_col: str = "GID_2"
+) -> pd.DataFrame:
+    """Make ``prediction`` non-decreasing in ``quantile`` within each series.
+
+    Per-quantile residual fits (``method="pinball"``) are independent, so the
+    corrected levels can cross. Lifting each level up to the running maximum of
+    the lower ones preserves the medians and the outer envelope.
+    """
+    keys = ["Date", geo_col, "horizon"]
+    required = keys + ["quantile", "prediction"]
+    if df.empty or not set(required).issubset(df.columns):
+        return df
+    if df["quantile"].nunique() < 2:
+        return df
+
+    wide = df.pivot(index=keys, columns="quantile", values="prediction")
+    wide = wide[sorted(wide.columns)].cummax(axis=1)
+    fixed = wide.reset_index().melt(
+        id_vars=keys, var_name="quantile", value_name="prediction"
+    )
+
+    out = (
+        df.drop(columns=["prediction"])
+        .assign(_row_id=np.arange(len(df)))
+        .merge(fixed, on=keys + ["quantile"], how="left")
+        .sort_values("_row_id")
+        .drop(columns=["_row_id"])
+        .reset_index(drop=True)
+    )
+    return out
+
+
 def residual_regression(
     df_model, df_predictors, method, geo_col="GID_2", window=None, horizons=None
 ):
@@ -550,6 +583,15 @@ def residual_regression(
         horizons = df_work["horizon"].unique()
     quantiles = sorted(df_work["quantile"].unique())
 
+    if method == "pinball" and len(quantiles) == 1:
+        warnings.warn(
+            f"Only one quantile level ({quantiles[0]}) is present: the pinball "
+            "adapter can correct that level but cannot create a spread. Request "
+            "several levels from the base model to get a predictive distribution.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     df_out = []
     for horizon in horizons:
         # logging.info(f"Fitting adapter (expanding window) for horizon {horizon}")
@@ -626,5 +668,9 @@ def residual_regression(
     df_out_all = df_out_all.sort_values(
         by=["Date", geo_col, "horizon", "quantile"]
     ).reset_index(drop=True)
+
+    # Independent per-quantile fits carry no ordering constraint, so the
+    # corrected levels can cross. Restore the quantile contract before returning.
+    df_out_all = enforce_monotone_quantiles(df_out_all, geo_col=geo_col)
 
     return df_out_all

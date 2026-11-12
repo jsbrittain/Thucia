@@ -19,6 +19,11 @@ torch.set_float32_matmul_precision(
 
 
 class DartsBase:
+    #: Whether `multivariate` mode injects the numeric geo codes as a
+    #: covariate. Foundation models with variate attention identify variates
+    #: implicitly, and TimesFM 2.5 accepts no covariates at all.
+    add_geo_codes_covariate = True
+
     def __init__(
         self,
         df: pd.DataFrame,
@@ -40,7 +45,8 @@ class DartsBase:
         self.date_col = date_col
         self.geo_col = geo_col
         self.geo_parent = geo_parent
-        self.covariate_cols = covariate_cols or []
+        # copy: subclasses append to this list (see `add_geo_codes_covariate`)
+        self.covariate_cols = list(covariate_cols or [])
         self.horizons = horizons
         self.num_samples = num_samples or 1000
         self.db_file = Path(db_file) if db_file else None
@@ -57,8 +63,9 @@ class DartsBase:
                 self.df[self.geo_col] = self.df[self.geo_col].astype("category")
 
         gid_codes_col = f"{self.geo_col}_codes"
-        if self.multivariate and gid_codes_col not in self.covariate_cols:
-            self.covariate_cols.append(gid_codes_col)  # added in get_cases
+        if self.multivariate and self.add_geo_codes_covariate:
+            if gid_codes_col not in self.covariate_cols:
+                self.covariate_cols.append(gid_codes_col)  # added in get_cases
 
         if self.db_file:
             logging.debug(f"Darts model initialized with file store: {self.db_file}")
@@ -142,7 +149,7 @@ class DartsBase:
             end_date = df[self.date_col].max()
 
         # Add geo units as numeric code for multivariate encoding
-        if self.multivariate:
+        if self.multivariate and self.add_geo_codes_covariate:
             gid_codes_col = f"{self.geo_col}_codes"
             if gid_codes_col not in df.columns:
                 df = df.assign(**{gid_codes_col: df[self.geo_col].cat.codes})
@@ -184,13 +191,19 @@ class DartsBase:
                 freq=freq,
             ).astype(np.float32)
 
-            cov = TimeSeries.from_dataframe(
-                gdf,
-                time_col="Date",
-                value_cols=self.covariate_cols,
-                fill_missing_dates=True,
-                freq=freq,
-            ).astype(np.float32)
+            if self.covariate_cols:
+                cov = TimeSeries.from_dataframe(
+                    gdf,
+                    time_col="Date",
+                    value_cols=self.covariate_cols,
+                    fill_missing_dates=True,
+                    freq=freq,
+                ).astype(np.float32)
+            else:
+                # A model with no covariates (e.g. a covariate-free foundation
+                # checkpoint): darts rejects `value_cols=[]`, so signal the
+                # absence with None and let the caller drop the covariate slots.
+                cov = None
 
             target_list.append(ts)
             covar_list.append(cov)

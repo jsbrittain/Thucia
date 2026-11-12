@@ -14,7 +14,17 @@ from dataclasses import field
 #: every model receives). Each maps to a `PipelineConfig` attribute in
 #: `thucia.core.pipeline.fit_model`.
 SUPPORTED_KWARGS = frozenset(
-    {"train_end_date", "retrain", "multivariate", "samples", "season_length"}
+    {
+        "train_end_date",
+        "retrain",
+        "multivariate",
+        "samples",
+        "season_length",
+        "quantiles",
+        "median_only",
+        "past_covariate_cols",
+        "future_covariate_cols",
+    }
 )
 
 #: Well-known model families, for categorization and documentation.

@@ -35,17 +35,16 @@ containers), so optional features are split into extras you install on demand.
 | Extra      | Provides                                               | Install                        |
 |------------|--------------------------------------------------------|--------------------------------|
 | `vis`      | The Streamlit dashboard (`thucia dashboard`)           | `pip install -e .[vis]`        |
-| `timesfm`  | The `timesfm` model (needs a PyTorch-enabled build)    | `pip install -e .[timesfm]`    |
-| `chronos`  | The `chronos` model                                    | `pip install -e .[chronos]`    |
+| `panels`   | Reading R `.rds` case panels (`read_rds`)              | `pip install -e .[panels]`     |
 | `dev`      | Tooling: `pytest`, `pytest-cov`, `pre-commit`          | `pip install -e .[dev]`        |
-| `all`      | Everything except `chronos`                            | `pip install -e .[all]`        |
+| `all`      | Visualisation, panels, and development tooling         | `pip install -e .[all]`        |
 
 ```{note}
-The `all` extra bundles the visualisation, `timesfm`, and development extras
-but does **not** pull in `chronos` — that model has heavyweight optional
-dependencies and is installed separately with the `chronos` extra. If you used
-`uv sync --all-extras`, every declared extra (including `chronos`) is already
-installed.
+The foundation models (`chronos`, `timesfm25`, `timesfm3`) need no extra of their
+own: `darts` ships the model implementations, and its PyTorch backend comes with
+the base `darts[all]` dependency. Their checkpoints are downloaded from
+HuggingFace Hub on first use (TimesFM 3.0 additionally requires
+`accept_license=True` — see {doc}`models`).
 ```
 
 The core forecasting workflow (the pipeline stages, the fast statistical

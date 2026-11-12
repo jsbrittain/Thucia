@@ -230,6 +230,10 @@ def fit_model(
         "multivariate": config.multivariate,
         "samples": config.num_samples,
         "season_length": config.season_length,
+        "quantiles": config.quantiles,
+        "median_only": config.median_only,
+        "past_covariate_cols": config.past_covariate_cols,
+        "future_covariate_cols": config.future_covariate_cols,
     }
     kwarg_name = {"samples": "num_samples"}  # others are identical to knob names
     for knob, value in knob_value.items():

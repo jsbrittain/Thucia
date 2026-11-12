@@ -1,6 +1,6 @@
 # Models
 
-Thucia ships **twelve forecast models** under `thucia.core.models`. They are
+Thucia ships **thirteen forecast models** under `thucia.core.models`. They are
 discovered automatically at import, described by declarative metadata, and
 called through a **unified interface** with a list-form `horizons` argument.
 
@@ -72,13 +72,22 @@ model = get_model("sarima")  # resolve the callable
 * - `chronos`
   - darts
   - —
-  - A pretrained foundation forecasting model.
-  - `chronos`
-* - `timesfm`
+  - Amazon's Chronos-2 pretrained foundation model (zero-shot; past and future
+    covariates). Emits its 13-level pre-trained quantile subset.
+  - `torch`¹
+* - `timesfm25`
   - darts
   - —
-  - Google's TimesFM foundation model (needs a PyTorch-enabled build).
-  - `timesfm[torch]`
+  - Google's TimesFM 2.5 foundation model (zero-shot; Apache-2.0 weights).
+    Takes **no covariates**. Emits the 9-level pre-trained quantile grid.
+  - `torch`¹
+* - `timesfm3`
+  - darts
+  - —
+  - Google's TimesFM 3.0 foundation model (zero-shot; native past/future
+    covariates, variate attention). Emits the 9-level pre-trained quantile grid.
+    **Weights are non-commercial** — requires `accept_license=True`.
+  - `torch`¹
 * - `inla`
   - container
   - —
@@ -87,8 +96,48 @@ model = get_model("sarima")  # resolve the callable
 ```
 
 ¹ The darts models need `torch`, which is pulled in by the base `darts[all]`
-dependency. `timesfm` and `chronos` additionally need their own extras — see
+dependency; the foundation models need no extra of their own — see
 {doc}`installation`.
+
+## Foundation models and quantiles
+
+`chronos`, `timesfm25` and `timesfm3` are pre-trained checkpoints with a *fixed*
+quantile head, so the levels they can emit are limited to the grid the
+checkpoint was trained on:
+
+| Model | Pre-trained grid | Requesting another level |
+|---|---|---|
+| `chronos` | 13 levels (`CHRONOS_QUANTILES`): 0.01, 0.05, 0.1 … 0.9, 0.95, 0.99 | `ValueError` |
+| `timesfm25`, `timesfm3` | 9 levels (`TIMESFM_QUANTILES`): 0.1, 0.2 … 0.9 | `ValueError` |
+
+Two ways to choose what they emit:
+
+```python
+# a subset of the pre-trained grid
+fit_model(df, "timesfm3", config, ...)        # honours config.quantiles
+PipelineConfig(quantiles=[0.1, 0.5, 0.9])      # subset request
+
+# or a deterministic median only (a single 0.5 component)
+PipelineConfig(median_only=True)
+```
+
+Leaving `quantiles=None` uses the model's full pre-trained grid. Requesting a
+level outside it raises (never silently relabels), and requesting a grid without
+0.5 warns because WIS and the ensemble then interpolate the median. Because
+{func}`create_ensemble <thucia.core.models.ensemble.create_ensemble>` intersects
+the models' grids, mixing a foundation model into an ensemble reduces the common
+grid (down to 9 levels if either TimesFM is included).
+
+Covariates are routed per column:
+
+```python
+PipelineConfig(
+    past_covariate_cols=None,             # None -> every covariate (default)
+    future_covariate_cols="all",          # also pass them as future-known covariates
+)
+```
+
+(`timesfm25` supports no covariates and warns when any are supplied.)
 
 ## Which models are "fast"?
 

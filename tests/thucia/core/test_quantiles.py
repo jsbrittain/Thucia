@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from thucia.core.cases import quantile_sum_fast
 from thucia.core.models.chronos import CHRONOS_QUANTILES
+from thucia.core.models.darts.foundation import TIMESFM_QUANTILES
 from thucia.core.models.quantiles import quantiles as models_quantiles
 from thucia.core.models.utils import quantiles as utils_quantiles
 from thucia.core.models.utils.residual_quantiles import quantiles as residual_quantiles
@@ -27,6 +28,13 @@ def test_canonical_grid_is_sorted_and_symmetric():
 def test_chronos_quantiles_are_a_subset_of_canonical():
     assert set(CHRONOS_QUANTILES) <= set(canonical)
     assert 0.025 not in CHRONOS_QUANTILES  # documented native-chronos limitation
+
+
+def test_timesfm_quantiles_are_the_documented_native_subset():
+    assert TIMESFM_QUANTILES == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    assert set(TIMESFM_QUANTILES) <= set(canonical)
+    # TimesFM has no tail heads beyond 0.1/0.9 (unlike chronos's 0.01/0.99).
+    assert {0.01, 0.025, 0.05, 0.95, 0.975, 0.99}.isdisjoint(TIMESFM_QUANTILES)
 
 
 def test_quantile_sum_fast_default_grid_matches_canonical():
