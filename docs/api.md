@@ -66,6 +66,8 @@ a thin, data-in/data-out function configured by
 .. autofunction:: thucia.core.cases.read_nc
 .. autofunction:: thucia.core.cases.write_nc
 .. autofunction:: thucia.core.fs.read_run_metadata
+.. autofunction:: thucia.core.fs.get_cache_folder
+.. autofunction:: thucia.core.fs.set_cache_folder
 ```
 
 ## PDFM embeddings

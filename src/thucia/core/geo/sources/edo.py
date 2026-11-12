@@ -10,7 +10,7 @@ import pandas as pd
 import requests
 from thucia.core.cache import Cache
 from thucia.core.cases import align_date_types
-from thucia.core.fs import cache_folder
+from thucia.core.fs import get_cache_folder
 from thucia.core.geo.plugin_base import source_registry
 from thucia.core.geo.plugin_base import SourceBase
 from thucia.core.geo.stats import raster_stats_gid2
@@ -27,7 +27,6 @@ class EDO(SourceBase):
     granularity = "M"
     name = "European Drought Observatory (EDO)"
 
-    cache_file = Path(cache_folder) / "climate" / "edo_stats.sqlite"
     cache_columns = {
         "GID_2": "TEXT",
         "GID_0": "TEXT",
@@ -47,6 +46,9 @@ class EDO(SourceBase):
     cache_keys = ["GID_2", "Date"]
 
     def __init__(self):
+        # Resolved per instance (not at import) so THUCIA_CACHE_DIR /
+        # set_cache_folder take effect.
+        self.cache_file = get_cache_folder() / "climate" / "edo_stats.sqlite"
         self.cache = Cache(
             "sqlite",
             cache_file=self.cache_file,
@@ -65,7 +67,7 @@ class EDO(SourceBase):
         #  m_300 - spatial resolution, 300 arcsecs (approx 10km)
         #  z - Tile zone of the global raster (01=western[americas], 02=central, etc.)
 
-        dirstem = Path(cache_folder) / "climate"
+        dirstem = get_cache_folder() / "climate"
         filestem = "spc06_m_gdo_{year}{month:02}01_m_300_z01.tif"
 
         tif_file = Path(dirstem) / filestem.format(year=year, month=month)

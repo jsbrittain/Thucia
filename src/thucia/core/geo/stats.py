@@ -1,9 +1,7 @@
-from pathlib import Path
-
 import geopandas as gpd
 import numpy as np
 import rasterio.mask
-from thucia.core.fs import cache_folder
+from thucia.core.fs import get_cache_folder
 
 _STAT_REDUCERS = {
     "min": np.nanmin,
@@ -82,7 +80,7 @@ def raster_stats_gid2(
         else:
             raise ValueError("Cannot derive ISO3 from a non-GADM code scheme.")
 
-        file_path = Path(cache_folder) / "geo" / iso3 / f"gadm41_{iso3}.gpkg"
+        file_path = get_cache_folder() / "geo" / iso3 / f"gadm41_{iso3}.gpkg"
         if not file_path.exists():
             raise FileNotFoundError(
                 f"GeoPackage file for {iso3} not found at {file_path}"

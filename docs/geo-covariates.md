@@ -70,8 +70,9 @@ via `PipelineConfig.covariate_interpolation` (`"linear"` by default; also
 
 ## Caching
 
-Downloads and derived statistics are cached under the platform cache directory
-(`thucia.core.fs.get_cache_folder()`):
+Download and dataset caches are stored under the platform cache directory
+(`thucia.core.fs.get_cache_folder()`), wherever `$THUCIA_CACHE_DIR` /
+`set_cache_folder()` points it:
 
 - `cache_folder/climate/` — WorldClim and EDO SQLite caches.
 - `cache_folder/geo/<ISO3>/gadm41_<ISO3>.gpkg` — GADM admin-2 GeoPackages used

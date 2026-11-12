@@ -13,14 +13,8 @@ import thucia.core.geo.sources.edo as edo_mod
 
 @pytest.fixture
 def edo(tmp_path, monkeypatch):
-    monkeypatch.setattr(edo_mod, "cache_folder", str(tmp_path))
-    climate = Path(tmp_path) / "climate"
-    climate.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        edo_mod.EDO,
-        "cache_file",
-        climate / "edo_stats.sqlite",
-    )
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
+    (Path(tmp_path) / "climate").mkdir(parents=True, exist_ok=True)
     return edo_mod.EDO()
 
 

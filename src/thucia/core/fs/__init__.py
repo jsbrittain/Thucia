@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from typing import Any
 from typing import Mapping
@@ -15,12 +16,66 @@ from .metadata import METADATA_ATTR
 
 appname = "thucia"
 appauthor = "global.Health"
-cache_folder = user_cache_dir(appname, appauthor)
+
+#: Environment variable that redirects the cache root (e.g. to an HPC scratch
+#: filesystem where the home directory is space limited).
+CACHE_DIR_ENV = "THUCIA_CACHE_DIR"
+
+#: In-process override set by :func:`set_cache_folder` (takes precedence over
+#: the environment variable).
+_cache_folder_override: Path | None = None
 
 
-def get_cache_folder():
-    """Returns the path to the cache folder."""
-    return cache_folder
+def _normalise_cache_folder(folder: str | os.PathLike) -> Path:
+    """Expand ``~`` and make a cache root absolute so it is CWD-invariant."""
+    return Path(folder).expanduser().absolute()
+
+
+def get_cache_folder() -> Path:
+    """Root directory for Thucia downloads and derived caches.
+
+    Resolution order, evaluated on every call:
+
+    1. an explicit :func:`set_cache_folder` override,
+    2. the ``THUCIA_CACHE_DIR`` environment variable,
+    3. the platform cache directory for ``global.Health/thucia``
+       (``platformdirs``; honours ``XDG_CACHE_HOME`` on Linux).
+
+    Resolving lazily means the environment variable may be set after
+    ``thucia`` has been imported. The directory is *not* created; callers create
+    the subdirectories they write to. Pointing the cache at an empty directory
+    therefore behaves like a cold cache (rasters and GADM files are re-fetched).
+    """
+    if _cache_folder_override is not None:
+        return _cache_folder_override
+    env = os.environ.get(CACHE_DIR_ENV)
+    if env:
+        return _normalise_cache_folder(env)
+    return Path(user_cache_dir(appname, appauthor))
+
+
+def set_cache_folder(folder: str | os.PathLike | None) -> Path:
+    """Override the cache root for the current process.
+
+    Pass ``None`` to clear the override and fall back to ``THUCIA_CACHE_DIR`` /
+    the platform cache directory. Returns the cache root that is now active.
+    """
+    global _cache_folder_override
+    _cache_folder_override = None if folder is None else _normalise_cache_folder(folder)
+    return get_cache_folder()
+
+
+def __getattr__(name: str):
+    """Expose the legacy ``cache_folder`` attribute lazily (PEP 562).
+
+    ``from thucia.core.fs import cache_folder`` keeps working, returning the
+    cache root active at that moment as a ``str``. New code should call
+    :func:`get_cache_folder` at the point of use instead, so a later
+    ``THUCIA_CACHE_DIR`` / :func:`set_cache_folder` change is honoured.
+    """
+    if name == "cache_folder":
+        return str(get_cache_folder())
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _df_to_xarray(df: pd.DataFrame) -> xr.Dataset:

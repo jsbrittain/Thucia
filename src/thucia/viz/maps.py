@@ -1,5 +1,4 @@
 import math
-from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.cm as cm
@@ -11,7 +10,7 @@ from matplotlib.ticker import FormatStrFormatter
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.optimize import linear_sum_assignment
 from shapely.geometry import Polygon
-from thucia.core.fs import cache_folder
+from thucia.core.fs import get_cache_folder
 
 
 def _admin_level_col(admin_level: str | int | None, default: str = "GID_1") -> str:
@@ -36,7 +35,7 @@ def boundary(
     else:
         raise ValueError(f"Unsupported admin_level: {admin_level}")
 
-    geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
+    geo_filename = get_cache_folder() / "geo" / country / f"gadm41_{country}.gpkg"
     gdf = gpd.read_file(geo_filename, layer=layer)
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
@@ -107,7 +106,7 @@ def choropleth(
         if len(countries) > 1:
             raise ValueError(f"DataFrame contains multiple countries: {countries}")
         country = countries.pop()
-        geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
+        geo_filename = get_cache_folder() / "geo" / country / f"gadm41_{country}.gpkg"
         gdf = gpd.read_file(geo_filename, layer=layer)
 
     df = df.groupby(geo_col)[value_col].agg(aggregation).reset_index()
@@ -223,7 +222,7 @@ def hexmap(
     df_agg = df.groupby(admin_level)[value_col].agg(aggregation).reset_index()
 
     # load geometry
-    geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
+    geo_filename = get_cache_folder() / "geo" / country / f"gadm41_{country}.gpkg"
     regions_gdf = gpd.read_file(geo_filename, layer=layer)
 
     # join aggregated values to regions (keep only regions with data)
@@ -362,7 +361,7 @@ def hex_cartogram(
     df_agg = df.groupby(admin_level)[value_col].agg(aggregation).reset_index()
 
     # load region geometries (GID_2)
-    geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
+    geo_filename = get_cache_folder() / "geo" / country / f"gadm41_{country}.gpkg"
     regions_gdf = gpd.read_file(geo_filename, layer="ADM_ADM_2")
 
     # keep only regions we have values for
@@ -583,7 +582,7 @@ def adjacency_matrix(
             raise ValueError("country must be provided when df is None.")
         keep_ids = None
 
-    geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
+    geo_filename = get_cache_folder() / "geo" / country / f"gadm41_{country}.gpkg"
     gdf = gpd.read_file(geo_filename, layer=layer)
 
     gdf = subset_regions(

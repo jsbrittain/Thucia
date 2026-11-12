@@ -8,7 +8,7 @@ import rasterio
 import requests
 from thucia.core.cache import Cache
 from thucia.core.cases import align_date_types
-from thucia.core.fs import cache_folder
+from thucia.core.fs import get_cache_folder
 from thucia.core.geo.plugin_base import source_registry
 from thucia.core.geo.plugin_base import SourceBase
 from thucia.core.geo.stats import raster_stats_gid2
@@ -20,7 +20,6 @@ class WorldClim(SourceBase):
     granularity = "M"
     name = "WorldClim"
 
-    cache_file = Path(cache_folder) / "climate" / "worldclim_stats.sqlite"
     cache_columns = {
         "GID_2": "TEXT",
         "GID_0": "TEXT",
@@ -42,6 +41,9 @@ class WorldClim(SourceBase):
     cache_keys = ["GID_2", "Date", "metric"]
 
     def __init__(self):
+        # Resolved per instance (not at import) so THUCIA_CACHE_DIR /
+        # set_cache_folder take effect.
+        self.cache_file = get_cache_folder() / "climate" / "worldclim_stats.sqlite"
         self.cache = Cache(
             "sqlite",
             cache_file=self.cache_file,
@@ -53,7 +55,7 @@ class WorldClim(SourceBase):
     def _get_filename_cru(self, metric, year, month):
         # Check for file in cache, download if not, and return as a DataFrame
 
-        dirstem = Path(cache_folder) / "climate"
+        dirstem = get_cache_folder() / "climate"
         filestem = "wc2.1_cruts4.09_2.5m_{metric}_{year}-{month:02d}.tif"
 
         tif_file = Path(dirstem) / filestem.format(
@@ -105,7 +107,7 @@ class WorldClim(SourceBase):
         res = "2.5m"
         ssp = "ssp245"
 
-        dirstem = Path(cache_folder) / "climate"
+        dirstem = get_cache_folder() / "climate"
         filestem_month = "wc2.1_{res}_{metric}_{source}_{ssp}_{year}-{month:02d}.tif"
         filestem_year = "wc2.1_{res}_{metric}_{source}_{ssp}_{year}.tif"
 
