@@ -106,7 +106,7 @@ full rewrite, and absent-from-old-file reads simply return `{}`.
 `code` identifies the code that produced the artefact, so "same model, same
 data, same assumptions" can be checked rather than assumed:
 
-```python
+```text
 {
   "source": "editable",          # editable | git | index | local | archive | source
   "distribution": {"name": "Thucia", "version": "0.1.dev135+g7d41bf06d.d20261112"},
