@@ -173,6 +173,47 @@ its larger grouping, and `train_col` the column to fit per-region at (`None`
 means a whole-dataset fit). Keep `horizons` as a **list** — the pipeline and
 backtest pass multi-horizon lists to every model.
 
+## Configured selections
+
+A bare model name is enough for a single default fit, but a comparison run usually
+needs more than a name: a label for the artefacts, and settings that differ from
+the shared {class}`PipelineConfig <thucia.core.pipeline.PipelineConfig>`.
+{class}`ModelSelection <thucia.core.models._meta.ModelSelection>` carries both,
+and `fit_model` accepts it anywhere it accepts a name:
+
+```python
+from thucia.core import ModelSelection, fit_models
+
+selections = [
+    ModelSelection("baseline"),
+    # same model, two configurations: each needs its own label
+    ModelSelection(
+        "sarima",
+        label="sarima_retrain52",
+        overrides={"retrain": True, "season_length": 52},
+    ),
+    ModelSelection("chronos", label="chronos_median", overrides={"median_only": True}),
+    # params go straight to the model callable (here `baseline(symmetrize=...)`)
+    ModelSelection("baseline", label="baseline_raw", params={"symmetrize": False}),
+]
+
+fits = fit_models(prepared_inputs, selections, config)   # {label: quantile frame}
+```
+
+- **`overrides`** are `PipelineConfig` field names applied for this model only;
+  `fit_model` validates them against the config, and warns when the selected
+  model never consumes one (it would otherwise be a silent no-op).
+- **`params`** are extra keyword arguments for the model callable. Unknown names
+  raise instead of being absorbed by a model's `**kwargs` and ignored.
+- **`label`** names the output file (`{label}_cases_quantiles.duckdb`) and is the
+  identifier to use in score frames. Two selections of the same model must have
+  distinct labels; duplicates raise before anything is fitted.
+
+`fit_model(df, selection_or_name, config)` fits one, `fit_models` fits several
+against the same prepared frame, and
+{attr}`BacktestConfig.model_name <thucia.core.validation.BacktestConfig>` accepts
+a selection too, so a variant can be backtested with its overrides intact.
+
 ## Declarative metadata (ModelSpec)
 
 Model dispatch is **metadata-driven**, not special-cased by name. Each model

@@ -17,17 +17,19 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from thucia.core.models import get_model_spec as _get_model_spec
+from thucia.core.models._meta import as_selection
+from thucia.core.models._meta import ModelSelection
 from thucia.core.pipeline import fit_model as _fit_model
 from thucia.core.pipeline import PipelineConfig
 from thucia.core.pipeline import score_model
 
 
-def _is_fast(model_name: str) -> bool:
+def _is_fast(model: str | ModelSelection) -> bool:
     """Whether a model is cheap enough to fit across backtest windows.
 
     Reads the model's declarative ModelSpec (`fast=True` for baseline/movavg).
     """
-    return _get_model_spec(model_name).fast
+    return _get_model_spec(as_selection(model).name).fast
 
 
 def expand_cutoffs(
@@ -55,10 +57,12 @@ def expand_cutoffs(
 class BacktestConfig:
     """Knobs for :func:`run_backtest` (model selection and the cutoff sweep)."""
 
-    model_name: str = "baseline"
+    #: Model to backtest: a name, or a ``ModelSelection`` to carry per-model
+    #: configuration/overrides into every cutoff fit.
+    model_name: str | ModelSelection = "baseline"
     #: If set, per-horizon skill is reported relative to this model's WIS
     #: (skill = 1 - model_WIS / reference_WIS at the same cutoff).
-    reference_model: Optional[str] = None
+    reference_model: Optional[str | ModelSelection] = None
     #: Explicit cutoff dates; when None the sweep is generated automatically.
     cutoffs: Optional[list[pd.Period]] = None
     min_history: int = 12
@@ -103,7 +107,7 @@ def _holdout_for_cutoff(
 
 def _fit_quantiles(
     slice_df: pd.DataFrame,
-    model_name: str,
+    model: str | ModelSelection,
     config: PipelineConfig,
     cutoff: pd.Period,
     fit_fn: Callable,
@@ -112,11 +116,13 @@ def _fit_quantiles(
     # The fit may persist quantile duckdb files; run it in a scratch dir so a
     # backtest never litters the caller's filesystem.
     cfg = dataclasses.replace(config, train_end_date=cutoff, path=work_dir)
-    frame = fit_fn(slice_df, model_name, cfg, db_file=None)
+    frame = fit_fn(slice_df, model, cfg, db_file=None)
     if hasattr(frame, "df"):
         frame = frame.df
     if "horizon" not in frame.columns or "Date" not in frame.columns:
-        raise ValueError(f"Model '{model_name}' returned no scored frame.")
+        raise ValueError(
+            f"Model '{as_selection(model).run_label}' returned no scored frame."
+        )
     return frame[frame["Date"] > cutoff]
 
 
@@ -201,8 +207,9 @@ def run_backtest(
         Backtest knobs (model, cutoff sweep, window, reference model). Uses
         defaults when None.
     fit_fn:
-        Optional ``(df, model_name, config, *, db_file=None) -> quantile frame``
-        hook for the primary model (testing / custom drivers); defaults to
+        Optional ``(df, model, config, *, db_file=None) -> quantile frame`` hook
+        for the primary model, where ``model`` is a model name or a
+        ``ModelSelection`` (testing / custom drivers); defaults to
         :func:`thucia.core.pipeline.fit_model`.
     reference_fit_fn:
         Optional hook for the reference model used in skill scores; defaults
@@ -212,8 +219,8 @@ def run_backtest(
 
     if bt.fast_only and not _is_fast(bt.model_name):
         raise ValueError(
-            f"model '{bt.model_name}' is not a fast backtest model "
-            "(baseline/movavg); set fast_only=False to allow it."
+            f"model '{as_selection(bt.model_name).run_label}' is not a fast "
+            "backtest model (baseline/movavg); set fast_only=False to allow it."
         )
     if (
         bt.reference_model is not None
@@ -221,8 +228,8 @@ def run_backtest(
         and not _is_fast(bt.reference_model)
     ):
         raise ValueError(
-            f"reference model '{bt.reference_model}' is not a fast backtest model "
-            "(baseline/movavg); set fast_only=False to allow it."
+            f"reference model '{as_selection(bt.reference_model).run_label}' is not "
+            "a fast backtest model (baseline/movavg); set fast_only=False to allow it."
         )
 
     horizons = list(config.horizons)

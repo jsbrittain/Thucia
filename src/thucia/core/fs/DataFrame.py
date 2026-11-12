@@ -5,9 +5,14 @@ from contextlib import contextmanager
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
+from typing import Mapping
 
 import duckdb
 import pandas as pd
+
+from .metadata import dumps
+from .metadata import loads
+from .metadata import RUN_METADATA_TABLE
 
 
 class DBConnect(AbstractContextManager[duckdb.DuckDBPyConnection]):
@@ -242,6 +247,63 @@ class DataFrame:
         using stored metadata.
         """
         return self.query_df(f"SELECT * FROM {self.table}")
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Run metadata recorded for this table (empty when the file has none).
+
+        Old files written before run metadata existed simply return ``{}``;
+        reading provenance never changes how the data itself is read.
+        """
+        try:
+            with self.dbconnect as con:
+                rows = con.execute(
+                    f"SELECT key, value FROM {RUN_METADATA_TABLE} WHERE table_name = ?",
+                    [self.table],
+                ).fetchall()
+        except Exception:  # no metadata table (old file) / in-memory DB
+            return {}
+        return {key: loads(value) for key, value in rows}
+
+    def set_metadata(
+        self,
+        docs: Mapping[str, Any],
+        *,
+        replace: bool = True,
+    ) -> None:
+        """Record run metadata documents (``selection``, ``config``, ...).
+
+        Each document is stored as one row of :data:`RUN_METADATA_TABLE` holding
+        deterministic JSON, so provenance survives a round trip without a schema
+        change every time a config field is added. ``replace=False`` merges the
+        documents into any metadata already recorded for this table.
+        """
+        if not docs:
+            return
+        merged = {} if replace else self.metadata
+        merged.update(docs)
+        now = pd.Timestamp.utcnow()
+        with self.dbconnect(read_only=False) as con:
+            con.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {RUN_METADATA_TABLE} (
+                    table_name VARCHAR,
+                    key VARCHAR,
+                    value VARCHAR,
+                    updated_at TIMESTAMP
+                )
+                """
+            )
+            con.execute(
+                f"DELETE FROM {RUN_METADATA_TABLE} WHERE table_name = ?", [self.table]
+            )
+            con.executemany(
+                f"INSERT INTO {RUN_METADATA_TABLE} VALUES (?, ?, ?, ?)",
+                [
+                    (self.table, str(key), dumps(value), now)
+                    for key, value in merged.items()
+                ],
+            )
 
     def get_table(self, db_path: str):
         # Check file for existing tables
