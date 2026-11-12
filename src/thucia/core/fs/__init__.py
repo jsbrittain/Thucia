@@ -1,11 +1,17 @@
 import logging
 from pathlib import Path
+from typing import Any
+from typing import Mapping
 
 import pandas as pd
 import xarray as xr
 from platformdirs import user_cache_dir
 
 from .DataFrame import DataFrame as DataFrame  # noqa: F401
+from .metadata import ATTRS_KEY
+from .metadata import dumps
+from .metadata import loads
+from .metadata import METADATA_ATTR
 
 appname = "thucia"
 appauthor = "global.Health"
@@ -23,7 +29,9 @@ def _df_to_xarray(df: pd.DataFrame) -> xr.Dataset:
     netCDF/Zarr cannot encode a pandas Period dtype. Period columns (e.g. a
     monthly ``Date``) are stored as their end timestamps with the period
     metadata recorded in the Dataset attrs so the read path can restore them.
+    Run metadata carried on ``df.attrs`` travels as a JSON string.
     """
+    run_metadata = getattr(df, "attrs", {}).get(METADATA_ATTR)
     df = df.copy()
     period_meta: dict[str, tuple[str, str]] = {}
     for col in df.columns:
@@ -37,6 +45,9 @@ def _df_to_xarray(df: pd.DataFrame) -> xr.Dataset:
         ds.attrs["period_var"] = first
         ds.attrs["period_freq"] = period_meta[first][0]
         ds.attrs["period_anchor"] = period_meta[first][1]
+    if run_metadata:
+        # netCDF/Zarr attrs are flat, so the documents travel as one JSON string.
+        ds.attrs[ATTRS_KEY] = dumps(run_metadata)
     return ds
 
 
@@ -54,6 +65,13 @@ def _restore_period_column(df: pd.DataFrame, attrs: dict) -> pd.DataFrame:
                 .dt.to_period(period_freq)
                 .asfreq(period_freq, how="start")
             )
+    return df
+
+
+def _restore_metadata(df: pd.DataFrame, attrs: dict) -> pd.DataFrame:
+    """Attach run metadata carried in Dataset attrs to ``df.attrs``."""
+    if ATTRS_KEY in attrs:
+        df.attrs[METADATA_ATTR] = loads(attrs[ATTRS_KEY])
     return df
 
 
@@ -113,7 +131,14 @@ def write_db(
     filename: str,
     table: str | None = None,
     categorical_cols: list[str] | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ):
+    """Write ``df`` to a DuckDB file, optionally recording run metadata.
+
+    ``metadata`` is a mapping of JSON-able documents (e.g. ``selection``,
+    ``config``) stored alongside the table. ``None`` leaves any metadata
+    already recorded on the file untouched.
+    """
     if isinstance(df, DataFrame):
         if df.db_path != ":memory:":
             logging.warning(
@@ -128,7 +153,9 @@ def write_db(
     if not Path(filename).suffix:
         filename = Path(filename).with_suffix(".duckdb")
 
-    DataFrame(df=df, db_path=filename, table=table)
+    db = DataFrame(df=df, db_path=filename, table=table)
+    if metadata is not None:
+        db.set_metadata(metadata)
     return
 
 
@@ -169,6 +196,7 @@ def read_nc(
     attrs = dict(ds.attrs)
     df = ds.to_dataframe().reset_index()
     df = _restore_period_column(df, attrs)
+    df = _restore_metadata(df, attrs)
     return _alias_gid_cols(df, geo_col, geo_parent)
 
 
@@ -198,6 +226,7 @@ def read_zarr(
     attrs = dict(ds.attrs)
     df = ds.to_dataframe().reset_index()
     df = _restore_period_column(df, attrs)
+    df = _restore_metadata(df, attrs)
     return _alias_gid_cols(df, geo_col, geo_parent)
 
 
@@ -251,3 +280,52 @@ def read_db(
         "Could not open file, missing or unsupported file extension"
         " (supported: .duckdb, .nc, .zarr)."
     )
+
+
+def _resolve_existing_path(filename: str | Path) -> Path:
+    """Resolve ``filename`` to an existing artefact, appending a known suffix."""
+    path = Path(filename)
+    if path.suffix:
+        return path
+    for ext in (".duckdb", ".nc", ".zarr"):
+        candidate = path.with_suffix(ext)
+        if candidate.exists():
+            return candidate
+    return path
+
+
+def read_run_metadata(filename: str | Path) -> dict[str, Any]:
+    """Read the run metadata recorded in a saved artefact.
+
+    Works for ``.duckdb`` (the ``__run_metadata__`` table), ``.nc`` and
+    ``.zarr`` (a JSON string in the Dataset attrs). Artefacts written before
+    run metadata existed — or any missing file — return ``{}``.
+    """
+    path = _resolve_existing_path(filename)
+    if not path.exists():
+        return {}
+
+    if path.suffix == ".duckdb":
+        return DataFrame(str(path)).metadata
+
+    if path.suffix == ".nc":
+        ds = xr.open_dataset(str(path))
+        try:
+            attrs = dict(ds.attrs)
+        finally:
+            ds.close()
+    elif path.suffix == ".zarr":
+        ds = xr.open_zarr(str(path))
+        try:
+            attrs = dict(ds.attrs)
+        finally:
+            ds.close()
+    else:
+        raise ValueError(
+            f"Cannot read run metadata from '{path.name}' "
+            "(supported: .duckdb, .nc, .zarr)."
+        )
+
+    if ATTRS_KEY not in attrs:
+        return {}
+    return loads(attrs[ATTRS_KEY])
