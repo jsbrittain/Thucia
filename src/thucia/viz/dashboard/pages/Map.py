@@ -6,7 +6,7 @@ import numpy as np
 import pydeck as pdk
 import streamlit as st
 from thucia.core.cases import read_db
-from thucia.core.fs import cache_folder
+from thucia.core.fs import get_cache_folder
 
 st.set_page_config(layout="wide")
 st.title("Thucia")
@@ -62,7 +62,7 @@ if data_filename is None:
 casedata_filename = str(data_folder / data_filename)
 
 # Load geospatial data
-geo_filename = Path(cache_folder) / "geo" / country / f"gadm41_{country}.gpkg"
+geo_filename = get_cache_folder() / "geo" / country / f"gadm41_{country}.gpkg"
 if admin_level == "ADM1":
     geojson = gpd.read_file(geo_filename, layer="ADM_ADM_1")
 elif admin_level == "ADM2":

@@ -13,14 +13,8 @@ import thucia.core.geo.sources.worldclim as worldclim
 
 @pytest.fixture
 def wc(tmp_path, monkeypatch):
-    monkeypatch.setattr(worldclim, "cache_folder", str(tmp_path))
-    climate = Path(tmp_path) / "climate"
-    climate.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        worldclim.WorldClim,
-        "cache_file",
-        climate / "worldclim_stats.sqlite",
-    )
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
+    (Path(tmp_path) / "climate").mkdir(parents=True, exist_ok=True)
     return worldclim.WorldClim()
 
 

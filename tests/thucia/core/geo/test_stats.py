@@ -35,7 +35,7 @@ def test_raster_stats_gid2_returns_kept_columns_with_stats(
     polygons, monkeypatch, tmp_path
 ):
     gid_2s = ["X.1.1_2", "X.1.2_2"]
-    monkeypatch.setattr(stats, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     # create the expected gpkg file so the existence check passes
     gpkg = tmp_path / "geo" / "X" / "gadm41_X.gpkg"
     gpkg.parent.mkdir(parents=True)
@@ -78,7 +78,7 @@ def test_raster_stats_gid2_returns_kept_columns_with_stats(
 
 
 def test_raster_stats_gid2_multi_stats(polygons, monkeypatch, tmp_path):
-    monkeypatch.setattr(stats, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     gpkg = tmp_path / "geo" / "X" / "gadm41_X.gpkg"
     gpkg.parent.mkdir(parents=True)
     gpkg.touch()
@@ -99,13 +99,13 @@ def test_raster_stats_gid2_multi_stats(polygons, monkeypatch, tmp_path):
 
 
 def test_raster_stats_gid2_mixed_iso3_raises(polygons, monkeypatch, tmp_path):
-    monkeypatch.setattr(stats, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     with pytest.raises(ValueError, match="same ISO3"):
         stats.raster_stats_gid2("some.tif", ["X.1.1_2", "Y.1.1_2"])
 
 
 def test_raster_stats_gid2_missing_gpkg_raises(monkeypatch, tmp_path):
-    monkeypatch.setattr(stats, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     with pytest.raises(FileNotFoundError, match="not found"):
         stats.raster_stats_gid2("some.tif", ["X.1.1_2"])
 

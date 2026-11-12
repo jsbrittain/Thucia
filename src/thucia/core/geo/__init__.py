@@ -12,8 +12,8 @@ import requests
 from rapidfuzz import fuzz
 from rapidfuzz import process
 from thucia.core.cases import period_freq_str
-from thucia.core.fs import cache_folder
 from thucia.core.fs import DataFrame
+from thucia.core.fs import get_cache_folder
 
 from .plugin_base import source_registry
 from .plugin_loader import load_plugins
@@ -47,7 +47,7 @@ def get_admin2_list(iso3: str) -> pd.DataFrame:
     GeoDataFrame: A GeoDataFrame containing the administrative regions.
     """
 
-    file_path = Path(cache_folder) / "geo" / iso3 / f"gadm41_{iso3}.gpkg"
+    file_path = get_cache_folder() / "geo" / iso3 / f"gadm41_{iso3}.gpkg"
     if not file_path.exists():
         logging.info("GeoPackage file not found, downloading...")
         url = (

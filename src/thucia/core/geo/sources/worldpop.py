@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 from thucia.core.cases import align_date_types
-from thucia.core.fs import cache_folder
+from thucia.core.fs import get_cache_folder
 from thucia.core.geo.plugin_base import source_registry
 from thucia.core.geo.plugin_base import SourceBase
 from thucia.core.geo.stats import raster_stats_gid2
@@ -46,7 +46,7 @@ class WorldPop(SourceBase):
     def get_filename(self, metric, gid_1, year):
         # Check for file in cache, download if not, and return as a DataFrame
 
-        dirstem = Path(cache_folder) / "geo"
+        dirstem = get_cache_folder() / "geo"
         dirstem.mkdir(parents=True, exist_ok=True)
 
         if metric == "pop_count":

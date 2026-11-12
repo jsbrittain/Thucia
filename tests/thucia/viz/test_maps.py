@@ -46,7 +46,7 @@ def _value_df(geo_gdf):
 
 @pytest.fixture
 def mock_read(monkeypatch, tmp_path, geo_gdf):
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(maps.gpd, "read_file", lambda *a, **k: geo_gdf)
     return geo_gdf
 
@@ -144,13 +144,13 @@ def test_adjacency_no_country_raises():
 
 
 def test_boundary_invalid_admin_level_raises(monkeypatch, tmp_path):
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     with pytest.raises(ValueError, match="Unsupported admin_level"):
         maps.boundary(country="X", admin_level=3)
 
 
 def test_boundary_plots(monkeypatch, tmp_path, geo_gdf):
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(maps.gpd, "read_file", lambda *a, **k: geo_gdf)
     fig, ax = matplotlib.pyplot.subplots()
     maps.boundary(country="X", admin_level=1, ax=ax)
@@ -160,7 +160,7 @@ def test_boundary_plots(monkeypatch, tmp_path, geo_gdf):
 def test_choropleth_multiple_countries_raises(monkeypatch, tmp_path):
     import pandas as pd
 
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     df = pd.DataFrame(
         {"GID_1": ["X.1_1", "Y.1_1"], "GID_2": ["X.1.1_2", "Y.1.1_2"], "Cases": [1, 2]}
     )
@@ -171,14 +171,14 @@ def test_choropleth_multiple_countries_raises(monkeypatch, tmp_path):
 def test_choropleth_invalid_admin_level_raises(monkeypatch, tmp_path):
     import pandas as pd
 
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     df = pd.DataFrame({"GID_1": ["X.1_1"], "GID_2": ["X.1.1_2"], "Cases": [1]})
     with pytest.raises(ValueError, match="Unsupported admin_level"):
         maps.choropleth(df, admin_level="GID_3")
 
 
 def test_choropleth_applies_transform_and_colorbar(monkeypatch, tmp_path, geo_gdf):
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(maps.gpd, "read_file", lambda *a, **k: geo_gdf)
     df = _value_df(geo_gdf)
     fig, ax = matplotlib.pyplot.subplots()
@@ -189,7 +189,7 @@ def test_choropleth_applies_transform_and_colorbar(monkeypatch, tmp_path, geo_gd
 
 
 def test_choropleth_symmetric_cmap(monkeypatch, tmp_path, geo_gdf):
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(maps.gpd, "read_file", lambda *a, **k: geo_gdf)
     df = _value_df(geo_gdf)
     fig, ax = matplotlib.pyplot.subplots()
@@ -258,7 +258,7 @@ def test_choropleth_custom_regions_requires_geo_col(geo_gdf):
 
 
 def test_hexmap_centroid_method(monkeypatch, tmp_path, geo_gdf):
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(maps.gpd, "read_file", lambda *a, **k: geo_gdf)
     out = maps.hexmap(_value_df(geo_gdf), admin_level=2, method="centroid")
     assert "hex_id" in out.columns
@@ -267,7 +267,7 @@ def test_hexmap_centroid_method(monkeypatch, tmp_path, geo_gdf):
 
 
 def test_hexmap_area_method(monkeypatch, tmp_path, geo_gdf):
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(maps.gpd, "read_file", lambda *a, **k: geo_gdf)
     out = maps.hexmap(_value_df(geo_gdf), admin_level=2, method="area")
     assert "hex_id" in out.columns
@@ -278,7 +278,7 @@ def test_hexmap_area_method(monkeypatch, tmp_path, geo_gdf):
 def test_hexmap_missing_gid1_raises(monkeypatch, tmp_path):
     import pandas as pd
 
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     with pytest.raises(ValueError, match="GID_1"):
         maps.hexmap(pd.DataFrame({"GID_2": ["X.1.1_2"]}), admin_level=2)
 
@@ -286,14 +286,14 @@ def test_hexmap_missing_gid1_raises(monkeypatch, tmp_path):
 def test_hexmap_multiple_countries_raises(monkeypatch, tmp_path):
     import pandas as pd
 
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     df = pd.DataFrame({"GID_1": ["X.1_1", "Y.1_1"], "Cases": [1, 2]})
     with pytest.raises(ValueError, match="multiple countries"):
         maps.hexmap(df, admin_level=1)
 
 
 def test_hex_cartogram_one_hex_per_gid2(monkeypatch, tmp_path, geo_gdf):
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(maps.gpd, "read_file", lambda *a, **k: geo_gdf)
     out = maps.hex_cartogram(_value_df(geo_gdf), admin_level=2)
     # exactly one hex per admin-2 region
@@ -307,7 +307,7 @@ def test_hex_cartogram_one_hex_per_gid2(monkeypatch, tmp_path, geo_gdf):
 def test_hex_cartogram_non_gid2_raises(monkeypatch, tmp_path):
     import pandas as pd
 
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     df = pd.DataFrame({"GID_1": ["X.1_1"], "GID_2": ["X.1.1_2"], "Cases": [1]})
     with pytest.raises(ValueError, match="admin_level=2"):
         maps.hex_cartogram(df, admin_level=1)
@@ -316,6 +316,6 @@ def test_hex_cartogram_non_gid2_raises(monkeypatch, tmp_path):
 def test_hex_cartogram_missing_gid1_raises(monkeypatch, tmp_path):
     import pandas as pd
 
-    monkeypatch.setattr(maps, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
     with pytest.raises(ValueError, match="GID_1"):
         maps.hex_cartogram(pd.DataFrame({"GID_2": ["X.1.1_2"]}), admin_level=2)

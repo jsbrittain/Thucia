@@ -7,7 +7,7 @@ import thucia
 from thucia.core.cases import write_nc
 from thucia.core.containers import build_container
 from thucia.core.containers import run_in_container
-from thucia.core.fs import cache_folder
+from thucia.core.fs import get_cache_folder
 
 from ._meta import ModelSpec
 
@@ -29,7 +29,7 @@ def inla(
     data_path = (
         Path(inspect.getfile(thucia)).parent.parent.parent / "data" / "cases" / iso3
     )
-    gadm_path = Path(cache_folder) / "geo" / iso3
+    gadm_path = get_cache_folder() / "geo" / iso3
     gadm_filename = f"gadm41_{iso3}.gpkg"
 
     # Build container

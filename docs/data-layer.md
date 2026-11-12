@@ -186,3 +186,34 @@ Downloads and derived caches are stored under the platform cache folder, which
 you can query with `thucia.core.fs.get_cache_folder()` (on macOS this resolves
 to `~/Library/Caches/global.Health/thucia/`). See {doc}`geo-covariates` for the
 covariate caches kept there.
+
+### Relocating the cache
+
+The cache root is resolved **on every call** (never frozen at import), in this
+order:
+
+1. an explicit `thucia.core.set_cache_folder(path)` override, for a single
+   process;
+2. the `THUCIA_CACHE_DIR` environment variable;
+3. the platform cache directory above (`XDG_CACHE_HOME` is already honoured on
+   Linux through `platformdirs`; the variable is the portable option).
+
+This matters on HPC systems where the home directory has a small quota: point
+the cache at scratch space before running anything.
+
+```console
+$ export THUCIA_CACHE_DIR=/scratch/$USER/thucia-cache
+$ thucia provenance run.duckdb      # any command uses the new root
+```
+
+```python
+import thucia.core
+
+thucia.core.set_cache_folder("/scratch/me/thucia-cache")  # or None to reset
+print(thucia.core.get_cache_folder())
+```
+
+The directory is not created for you; sources create the subdirectories they
+write to. An empty (or fresh) root behaves like a cold cache, so the GADM
+GeoPackages and WorldClim/EDO/WorldPop rasters are downloaded again the first
+time they are needed.

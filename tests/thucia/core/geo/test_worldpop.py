@@ -43,10 +43,10 @@ def test_resolve_country_key_no_key_raises():
 
 
 def test_worldpop_merge_generic_geo_col(tmp_path, monkeypatch):
-    from thucia.core.geo.sources.worldpop import WorldPop
     import thucia.core.geo.sources.worldpop as worldpop
+    from thucia.core.geo.sources.worldpop import WorldPop
 
-    monkeypatch.setattr(worldpop, "cache_folder", str(tmp_path))
+    monkeypatch.setenv("THUCIA_CACHE_DIR", str(tmp_path))
 
     wp = WorldPop()
     monkeypatch.setattr(wp, "get_filename", lambda metric, gid_1, year: "fake.tif")
