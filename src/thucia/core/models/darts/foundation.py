@@ -1,24 +1,23 @@
-"""Shared scaffolding for ``darts`` ``FoundationModel`` wrappers.
-
-Chronos-2, TimesFM 2.5 and TimesFM 3.0 are pre-trained models with a *fixed*
-quantile head. ``darts`` slices the requested levels out of that head (the
-likelihood's quantiles must be a subset of the grid the checkpoint was trained
-on) and exposes them as ``<component>_q<level>`` components when
-``predict_likelihood_parameters=True`` -- the naming :class:`DartsBase` already
-parses back into ``quantile`` rows.
-
-This module centralises what those wrappers share:
-
-* validation of a requested quantile grid against the pre-trained one,
-* the deterministic ``median_only`` mode (implemented as a one-level quantile
-  likelihood, so the component naming stays uniform),
-* covariate routing (each covariate goes to the past slot, the future slot, or
-  both), and
-* the zero-shot ``fit`` / ``historical_forecasts`` plumbing.
-
-Subclasses set ``MODEL_QUANTILES`` (the pre-trained grid), ``SUPPORTS_COVARIATES``
-and implement ``build_model(horizon)``.
-"""
+# Shared scaffolding for ``darts`` ``FoundationModel`` wrappers.
+#
+# Chronos-2, TimesFM 2.5 and TimesFM 3.0 are pre-trained models with a *fixed*
+# quantile head. ``darts`` slices the requested levels out of that head (the
+# likelihood's quantiles must be a subset of the grid the checkpoint was trained
+# on) and exposes them as ``<component>_q<level>`` components when
+# ``predict_likelihood_parameters=True`` -- the naming :class:`DartsBase` already
+# parses back into ``quantile`` rows.
+#
+# This module centralises what those wrappers share:
+#
+# * validation of a requested quantile grid against the pre-trained one,
+# * the deterministic ``median_only`` mode (implemented as a one-level quantile
+#   likelihood, so the component naming stays uniform),
+# * covariate routing (each covariate goes to the past slot, the future slot, or
+#   both), and
+# * the zero-shot ``fit`` / ``historical_forecasts`` plumbing.
+#
+# Subclasses set ``MODEL_QUANTILES`` (the pre-trained grid), ``SUPPORTS_COVARIATES``
+# and implement ``build_model(horizon)``.
 import logging
 import warnings
 from typing import List
