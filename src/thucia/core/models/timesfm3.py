@@ -8,8 +8,8 @@ from darts.models import TimesFM3Model
 from thucia.core.fs import DataFrame
 
 from ._meta import ModelSpec
-from .darts.foundation import TIMESFM_QUANTILES
 from .darts.foundation import FoundationQuantileBase
+from .darts.foundation import TIMESFM_QUANTILES
 
 SPEC = ModelSpec(
     name="timesfm3",

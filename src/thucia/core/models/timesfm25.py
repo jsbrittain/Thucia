@@ -9,8 +9,8 @@ from darts.models import TimesFM2p5Model
 from thucia.core.fs import DataFrame
 
 from ._meta import ModelSpec
-from .darts.foundation import TIMESFM_QUANTILES
 from .darts.foundation import FoundationQuantileBase
+from .darts.foundation import TIMESFM_QUANTILES
 
 SPEC = ModelSpec(
     name="timesfm25",
@@ -66,9 +66,7 @@ class TimesFMQuantiles25(FoundationQuantileBase):
     def build_model(self, horizon):
         # TimesFM 2.5's darts class caps output_chunk_length (+ shift) at 128.
         if horizon > 128:
-            raise ValueError(
-                f"TimesFM 2.5 supports horizons up to 128, got {horizon}."
-            )
+            raise ValueError(f"TimesFM 2.5 supports horizons up to 128, got {horizon}.")
         return TimesFM2p5Model(
             input_chunk_length=self.input_chunk_length,
             output_chunk_length=horizon,

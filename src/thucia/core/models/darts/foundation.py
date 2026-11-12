@@ -99,7 +99,10 @@ class FoundationQuantileBase(DartsBase):
         # Resolve covariate routing against the covariates the pipeline supplied.
         available = list(self.covariate_cols)
         self.past_covariate_cols = self._select_cols(
-            past_covariate_cols, available, default=available, name="past_covariate_cols"
+            past_covariate_cols,
+            available,
+            default=available,
+            name="past_covariate_cols",
         )
         self.future_covariate_cols = self._select_cols(
             future_covariate_cols,
@@ -119,7 +122,9 @@ class FoundationQuantileBase(DartsBase):
         """Validate a requested grid against the model's pre-trained grid."""
         native = list(self.MODEL_QUANTILES)
         if not native:
-            raise NotImplementedError(f"{type(self).__name__} must set MODEL_QUANTILES.")
+            raise NotImplementedError(
+                f"{type(self).__name__} must set MODEL_QUANTILES."
+            )
 
         if median_only:
             if requested:
@@ -167,9 +172,7 @@ class FoundationQuantileBase(DartsBase):
         components = getattr(first, "components", None)
         if components is None:
             return
-        levels = sorted(
-            float(c.rsplit("_q", 1)[-1]) for c in components if "_q" in c
-        )
+        levels = sorted(float(c.rsplit("_q", 1)[-1]) for c in components if "_q" in c)
         if levels != sorted(self.quantiles):
             raise RuntimeError(
                 f"{type(self).__name__}: darts returned quantile levels {levels} "
