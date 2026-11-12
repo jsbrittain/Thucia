@@ -22,6 +22,8 @@ a thin, data-in/data-out function configured by
 .. autofunction:: thucia.core.pipeline.prepare_model_inputs
 .. autofunction:: thucia.core.pipeline.fit_model
 .. autofunction:: thucia.core.pipeline.fit_models
+.. autofunction:: thucia.core.pipeline.code_document
+.. autofunction:: thucia.core.pipeline.verify_code_identity
 .. autofunction:: thucia.core.pipeline.score_model
 .. autofunction:: thucia.core.pipeline.aggregate_quantiles
 .. autofunction:: thucia.core.pipeline.build_ensemble

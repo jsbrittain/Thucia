@@ -1,6 +1,8 @@
 # thucia.core.pipeline: reusable forecasting-pipeline computation stages.
 from thucia.core.models._meta import ModelSelection
 from thucia.core.pipeline.config import PipelineConfig
+from thucia.core.pipeline.provenance import code_document
+from thucia.core.pipeline.provenance import verify_code_identity
 from thucia.core.pipeline.stages import aggregate_quantiles
 from thucia.core.pipeline.stages import apply_residual_regression
 from thucia.core.pipeline.stages import build_ensemble
@@ -18,9 +20,11 @@ __all__ = [
     "apply_residual_regression",
     "build_ensemble",
     "cases_per_period",
+    "code_document",
     "fit_model",
     "fit_models",
     "merge_covariates",
     "prepare_model_inputs",
     "score_model",
+    "verify_code_identity",
 ]

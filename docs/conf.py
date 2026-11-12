@@ -29,6 +29,7 @@ exclude_patterns = [
     "Thumbs.db",
     ".DS_Store",
     "venv",
+    ".venv",  # a local env inside docs/ must not be scanned as sources
     "README.md",
 ]
 

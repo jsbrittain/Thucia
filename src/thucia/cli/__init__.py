@@ -10,6 +10,9 @@ class Command:
     name: str = "base"
     help: str = "base command"
     arguments: List[dict] = []
+    #: Extra argv a command needs to parse at all (e.g. a required positional),
+    #: used by the parser-wiring tests.
+    minimal_argv: tuple = ()
 
     @classmethod
     def add_to_subparsers(cls, subparsers):
@@ -370,6 +373,60 @@ class PlotCasesPerDay(Command):
         steps.plot_cases_per_day(*args, **kwargs)
 
 
+@dataclass
+class ProvenanceCommand(Command):
+    name = "provenance"
+    help = "Show (or verify) the run metadata recorded in a saved artefact."
+
+    minimal_argv = ("run.duckdb",)
+
+    arguments = [
+        {
+            "flags": ("file",),
+            "type": str,
+            "help": (
+                "Saved artefact to inspect: a .duckdb/.nc/.zarr written by "
+                "fit_model (or any file carrying __run_metadata__)."
+            ),
+        },
+        {
+            "flags": ("--document",),
+            "type": str,
+            "default": None,
+            "help": (
+                "Print only this document (selection, config, code, inputs, "
+                "environment). Default: all documents."
+            ),
+        },
+        {
+            "flags": ("--json",),
+            "dest": "as_json",
+            "action": "store_true",
+            "help": "Emit compact JSON instead of indented JSON.",
+        },
+        {
+            "flags": ("--verify",),
+            "action": "store_true",
+            "help": (
+                "Compare the recorded implementation with the one running now; "
+                "exit 1 when they differ."
+            ),
+        },
+        {
+            "flags": ("--include-deps",),
+            "dest": "include_deps",
+            "action": "store_true",
+            "help": (
+                "With --verify, also compare the numerics-stack versions "
+                "(darts/torch/statsmodels/numpy/pandas/duckdb)."
+            ),
+        },
+    ]
+
+    def run(self, file, *args, **kwargs):
+        return steps.provenance(file, **kwargs)
+
+
 CommandsList = [
     DashboardCommand,
     CasesPerMonth,
@@ -378,4 +435,5 @@ CommandsList = [
     PlotCasesPerWeek,
     CasesPerDay,
     PlotCasesPerDay,
+    ProvenanceCommand,
 ]
