@@ -202,6 +202,69 @@ def test_fit_model_unknown_raises(tmp_path):
         fit_model(pd.DataFrame(), "not_a_model", PipelineConfig(path=tmp_path))
 
 
+def test_fit_model_forwards_foundation_knobs(tmp_path, monkeypatch):
+    # The declarative dispatch must forward quantiles / median_only / covariate
+    # routing to models that declare support for them.
+    import thucia.core.pipeline.stages as stages
+    from thucia.core.models._meta import ModelSpec
+
+    captured = {}
+
+    def _fake_model(df, **kwargs):
+        captured.update(kwargs)
+        return pd.DataFrame(
+            {
+                "Date": df["Date"],
+                "GID_2": df["GID_2"],
+                "quantile": 0.5,
+                "prediction": 0.0,
+                "Cases": df["Cases"],
+            }
+        )
+
+    spec = ModelSpec(
+        name="_fake",
+        family="darts",
+        supports=frozenset(
+            {
+                "quantiles",
+                "median_only",
+                "past_covariate_cols",
+                "future_covariate_cols",
+            }
+        ),
+    )
+    monkeypatch.setattr(stages, "get_model", lambda name: _fake_model)
+    monkeypatch.setattr(stages.models, "get_model_spec", lambda name: spec)
+
+    idx = pd.period_range("2016-01", periods=12, freq="M")
+    df = pd.DataFrame(
+        {
+            "Date": idx.repeat(2),
+            "GID_1": ["G.1_1"] * 24,
+            "GID_2": ["G.1.1_2", "G.1.2_2"] * 12,
+            "future": [False] * 24,
+            "Cases": np.tile(np.arange(12.0), 2),
+            "Log_Cases": np.log1p(np.tile(np.arange(12.0), 2)),
+            "tmin": np.linspace(10, 20, 24),
+        }
+    )
+    cfg = PipelineConfig(
+        path=tmp_path,
+        horizons=[1],
+        quantiles=[0.1, 0.5, 0.9],
+        median_only=False,
+        past_covariate_cols=["tmin"],
+        future_covariate_cols="all",
+    )
+    fit_model(df, "_fake", cfg, db_file=None)
+
+    assert captured["quantiles"] == [0.1, 0.5, 0.9]
+    assert captured["median_only"] is False
+    assert captured["past_covariate_cols"] == ["tmin"]
+    assert captured["future_covariate_cols"] == "all"
+
+
 def test_fit_model_coerces_integer_geo_codes(tmp_path):
     # geo codes arrive as integers (e.g. from a non-GADM loader): the pipeline
     # must coerce them to str so ENUM writes and per-region group-bys stay

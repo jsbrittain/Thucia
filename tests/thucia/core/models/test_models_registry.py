@@ -78,6 +78,10 @@ KNOW_TO_KWARG = {
     "multivariate": "multivariate",
     "samples": "num_samples",
     "season_length": "season_length",
+    "quantiles": "quantiles",
+    "median_only": "median_only",
+    "past_covariate_cols": "past_covariate_cols",
+    "future_covariate_cols": "future_covariate_cols",
 }
 KNOB_VALUES = {
     "train_end_date": "2022-01",
@@ -85,6 +89,10 @@ KNOB_VALUES = {
     "multivariate": False,
     "samples": 200,
     "season_length": 12,
+    "quantiles": [0.5],
+    "median_only": False,
+    "past_covariate_cols": ["x"],
+    "future_covariate_cols": None,
 }
 
 

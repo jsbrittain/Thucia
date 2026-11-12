@@ -267,11 +267,73 @@ def test_residual_regression_ridge_multihorizon_offset():
 
 
 def test_residual_regression_pinball_method():
+    # The pinball method fits one quantile regressor per level, so it needs the
+    # frame to carry several levels (see the spread test below).
     df = _predictions_df(n_dates=6)
+    df = pd.concat([df.assign(quantile=q) for q in [0.1, 0.5, 0.9]], ignore_index=True)
     out = residual_regression(
         df, _embedding_df(), method="pinball", geo_col="GID_2", horizons=[1]
     )
     assert len(out) == len(df)
+    assert set(out["quantile"].unique()) == {0.1, 0.5, 0.9}
+
+
+def test_residual_regression_pinball_creates_spread_from_flat_levels():
+    # A median replicated across levels carries no spread; the per-level
+    # pinball fits turn it into a distribution (the post-hoc quantile route).
+    df = _predictions_df(n_dates=10)
+    df = pd.concat([df.assign(quantile=q) for q in [0.1, 0.5, 0.9]], ignore_index=True)
+    out = residual_regression(
+        df, _embedding_df(), method="pinball", geo_col="GID_2", horizons=[1]
+    )
+    wide = out.pivot_table(
+        index=["Date", "GID_2", "horizon"], columns="quantile", values="prediction"
+    )
+    assert (wide[0.9] - wide[0.1] >= -1e-9).all()
+    # not all levels collapse onto the median
+    assert (wide[0.9] > wide[0.1]).any()
+
+
+def test_residual_regression_single_level_warns():
+    df = _predictions_df(n_dates=6)
+    with pytest.warns(UserWarning, match="cannot create a spread"):
+        residual_regression(
+            df, _embedding_df(), method="pinball", geo_col="GID_2", horizons=[1]
+        )
+
+
+def test_enforce_monotone_quantiles_lifts_crossings():
+    from thucia.core.models.utils.adapter import enforce_monotone_quantiles
+
+    df = pd.DataFrame(
+        {
+            "Date": pd.period_range("2020-01", periods=2, freq="M").repeat(3),
+            "GID_2": ["G0", "G0", "G0"] * 2,
+            "horizon": 1,
+            "quantile": [0.1, 0.5, 0.9] * 2,
+            "prediction": [15.0, 12.0, 9.0, 1.0, 2.0, 3.0],  # first date crosses
+            "Cases": 10.0,
+        }
+    )
+    out = enforce_monotone_quantiles(df, geo_col="GID_2")
+    assert list(out["prediction"]) == [15.0, 15.0, 15.0, 1.0, 2.0, 3.0]
+    assert len(out) == len(df)
+
+
+def test_residual_regression_output_is_monotone():
+    df = _predictions_df(n_dates=8)
+    df = pd.concat(
+        [df.assign(quantile=q) for q in [0.1, 0.3, 0.5, 0.7, 0.9]], ignore_index=True
+    )
+    # deliberately cross the input levels
+    df.loc[df["quantile"] == 0.1, "prediction"] = 20.0
+    out = residual_regression(
+        df, _embedding_df(), method="pinball", geo_col="GID_2", horizons=[1]
+    )
+    wide = out.pivot_table(
+        index=["Date", "GID_2", "horizon"], columns="quantile", values="prediction"
+    )
+    assert (wide.diff(axis=1).iloc[:, 1:] >= -1e-9).all().all()
 
 
 def test_residual_regression_mlp_method():

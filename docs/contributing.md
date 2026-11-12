@@ -42,7 +42,7 @@ Some tests need a container runtime or network:
 
 ```console
 $ uv run pytest tests/thucia/core/containers/   # needs Docker/Podman running
-$ uv run pytest -m "slow and network"           # timesfm checkpoint download
+$ uv run pytest -m "slow and network"           # TimesFM / Chronos checkpoint download
 ```
 
 ### Test style
